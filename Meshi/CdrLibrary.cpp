@@ -1,0 +1,1837 @@
+﻿// CdrLibrary.cpp : 애플리케이션의 진입점을 정의합니다.
+//
+
+#include "CdrLibrary.h"
+#include <array>
+#include <string>
+#include <vector>
+#include <optional>
+#include <bit>
+#include <span>
+#include <map>
+#include <stack>
+
+#include "xtypes.h"
+
+// For MD5 Hash, We uses Windows Crypto API
+#if defined(_WIN32)
+#include <Windows.h>
+#include <Wincrypt.h>
+#endif
+
+using namespace std;
+using namespace meshi::dds;
+using namespace meshi::dds::xtypes;
+
+class ICdrHandler
+{
+public:
+	virtual bool Null() = 0;
+	virtual bool Bool(bool) = 0;
+	virtual bool Octet(uint8_t) = 0;
+	virtual bool Short(int16_t) = 0;
+	virtual bool Long(int32_t) = 0;
+	virtual bool LongLong(int64_t) = 0;
+	virtual bool UnsignedShort(uint16_t) = 0;
+	virtual bool UnsignedLong(uint32_t) = 0;
+	virtual bool UnsignedLongLong(uint64_t) = 0;
+	virtual bool Float(float) = 0;
+	virtual bool Double(double) = 0;
+	virtual bool Char8(char) = 0;
+	virtual bool Char16(char16_t) = 0;
+	virtual bool String8(const std::string&) = 0;
+	virtual bool String16(const std::u16string&) = 0;
+	virtual bool Key(uint16_t id) = 0;
+	virtual bool BeginStructure() = 0;
+	virtual bool EndStructure() = 0;
+	virtual bool StartArray(uint32_t) = 0;
+	virtual bool EndArray() = 0;
+	virtual bool BeginSequence(uint32_t) = 0;
+	virtual bool EndSequence(uint32_t) = 0;
+};
+
+class ICdrWriter
+{
+public:
+	virtual void WriteCdrHeader() = 0;
+	virtual bool BeginOptional(meshi::dds::xtypes::MemberId id, bool none) = 0;
+	virtual bool EndOptional() = 0;
+	virtual bool Bool(bool) = 0;
+	virtual bool Octet(uint8_t) = 0;
+	virtual bool Short(int16_t) = 0;
+	virtual bool Long(int32_t) = 0;
+	virtual bool LongLong(int64_t) = 0;
+	virtual bool UnsignedShort(uint16_t) = 0;
+	virtual bool UnsignedLong(uint32_t) = 0;
+	virtual bool UnsignedLongLong(uint64_t) = 0;
+	virtual bool Float(float) = 0;
+	virtual bool Double(double) = 0;
+	virtual bool Char8(char) = 0;
+	virtual bool Char16(char16_t) = 0;
+	virtual bool String8(const std::string&) = 0;
+	virtual bool String16(const std::u16string&) = 0;
+	virtual bool BeginAggregated(meshi::dds::xtypes::Extensibility extensibility = meshi::dds::xtypes::Extensibility::Final) = 0;
+	virtual bool EndAggregated() = 0;
+	virtual bool BeginMember(meshi::dds::xtypes::MemberId id, bool mustUnderstand, uint8_t lengthCode) = 0;
+	virtual bool EndMember() = 0;
+	virtual bool BeginDiscriminator(uint8_t lengthCode) = 0;
+	virtual bool EndDiscriminator() = 0;
+
+	virtual bool BeginSequence(uint32_t count, bool nonFinalType = true) = 0;
+	virtual bool EndSequence() = 0;
+
+	virtual bool BeginArray(bool nonFinalType = true) = 0;
+	virtual bool EndArray() = 0;
+
+};
+
+enum CdrWriterRole
+{
+	CDR1WRITER_ROLE_SERIALIZATION,
+	CDR1WRITER_ROLE_CALC_SIZE
+};
+
+template<CdrWriterRole ROLE, std::endian ENDIAN = std::endian::native>
+class Cdr1Writer : public ICdrWriter
+{
+public:
+	Cdr1Writer()
+	{
+		m_buffer = nullptr;
+		m_orgin = 0;
+		m_length = 0;
+		m_offset = 0;
+		if constexpr (ROLE == CDR1WRITER_ROLE_CALC_SIZE)
+		{
+			m_length = UINT32_MAX;
+		}
+	}
+
+	Cdr1Writer(uint8_t* buffer, size_t length)
+	{
+		m_buffer = buffer;
+		m_length = length;
+		m_orgin = 0;
+		m_offset = 0;
+	}
+
+	void WriteCdrHeader()
+	{
+		if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION)
+		{
+			// CDR1 Header
+			// - 1 byte: options
+			// - 3 bytes: unused, set to 0
+			m_buffer[0] = 0x00; // options
+			m_buffer[1] = (ENDIAN == std::endian::little ? 1 : 0); // endianness: little endian
+			m_buffer[2] = 0x00; // unused
+			m_buffer[3] = 0x00; // unused
+		}
+
+		m_orgin = 4;
+		m_offset += 4;
+	}
+
+	template<typename T>
+	void Write(T data)
+	{
+		if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION)
+		{
+			if constexpr (ENDIAN == std::endian::native || sizeof(T) == 1)
+			{
+				*reinterpret_cast<T*>(m_buffer + m_offset) = data;
+			}
+			else
+			{
+				static_assert(sizeof(T) <= 8 || sizeof(T) % 2 == 0, "Unsupported Primitive Type");
+				if constexpr (sizeof(T) == 8)
+				{
+					(m_buffer + m_offset)[0] = (std::bit_cast<uint64_t>(data) >> 00) & 0xFF;
+					(m_buffer + m_offset)[1] = (std::bit_cast<uint64_t>(data) >> 010) & 0xFF; // 8
+					(m_buffer + m_offset)[2] = (std::bit_cast<uint64_t>(data) >> 020) & 0xFF; // 16
+					(m_buffer + m_offset)[3] = (std::bit_cast<uint64_t>(data) >> 030) & 0xFF; // 24
+					(m_buffer + m_offset)[4] = (std::bit_cast<uint64_t>(data) >> 040) & 0xFF; // 32
+					(m_buffer + m_offset)[5] = (std::bit_cast<uint64_t>(data) >> 050) & 0xFF; // 40
+					(m_buffer + m_offset)[6] = (std::bit_cast<uint64_t>(data) >> 060) & 0xFF; // 48
+					(m_buffer + m_offset)[7] = (std::bit_cast<uint64_t>(data) >> 070) & 0xFF; // 56
+				}
+				else if constexpr (sizeof(T) == 4)
+				{
+					(m_buffer + m_offset)[0] = (std::bit_cast<uint32_t>(data) >> 00) & 0xFF;
+					(m_buffer + m_offset)[1] = (std::bit_cast<uint32_t>(data) >> 010) & 0xFF; // 8
+					(m_buffer + m_offset)[2] = (std::bit_cast<uint32_t>(data) >> 020) & 0xFF; // 16
+					(m_buffer + m_offset)[3] = (std::bit_cast<uint32_t>(data) >> 030) & 0xFF; // 24
+				}
+				else if constexpr (sizeof(T) == 2)
+				{
+					(m_buffer + m_offset)[0] = (std::bit_cast<uint16_t>(data) >> 00) & 0xFF;
+					(m_buffer + m_offset)[1] = (std::bit_cast<uint16_t>(data) >> 010) & 0xFF; // 8
+				}
+			}
+		}
+	}
+
+	template<typename T>
+	void MemCpy(const T* data, size_t length)
+	{
+		if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION)
+		{
+			if constexpr (ENDIAN == std::endian::native || sizeof(T) == 1)
+			{
+				memcpy(m_buffer + m_offset, data, length);
+			}
+			else
+			{
+				static_assert(sizeof(T) <= 8 || sizeof(T) % 2 == 0, "Unsupported Primitive Type");
+				size_t index = 0;
+				for (size_t i = 0; i < length; ++i)
+				{
+					T item = data[i];
+					if constexpr (sizeof(T) == 8)
+					{
+						(m_buffer + index)[0] = (std::bit_cast<uint64_t>(item) >> 00) & 0xFF;
+						(m_buffer + index)[1] = (std::bit_cast<uint64_t>(item) >> 010) & 0xFF; // 8
+						(m_buffer + index)[2] = (std::bit_cast<uint64_t>(item) >> 020) & 0xFF; // 16
+						(m_buffer + index)[3] = (std::bit_cast<uint64_t>(item) >> 030) & 0xFF; // 24
+						(m_buffer + index)[4] = (std::bit_cast<uint64_t>(item) >> 040) & 0xFF; // 32
+						(m_buffer + index)[5] = (std::bit_cast<uint64_t>(item) >> 050) & 0xFF; // 40
+						(m_buffer + index)[6] = (std::bit_cast<uint64_t>(item) >> 060) & 0xFF; // 48
+						(m_buffer + index)[7] = (std::bit_cast<uint64_t>(item) >> 070) & 0xFF; // 56
+					}
+					else if constexpr (sizeof(T) == 4)
+					{
+						(m_buffer + index)[0] = (std::bit_cast<uint32_t>(item) >> 00) & 0xFF;
+						(m_buffer + index)[1] = (std::bit_cast<uint32_t>(item) >> 010) & 0xFF; // 8
+						(m_buffer + index)[2] = (std::bit_cast<uint32_t>(item) >> 020) & 0xFF; // 16
+						(m_buffer + index)[3] = (std::bit_cast<uint32_t>(item) >> 030) & 0xFF; // 24
+					}
+					else if constexpr (sizeof(T) == 2)
+					{
+						(m_buffer + index)[0] = (std::bit_cast<uint16_t>(item) >> 00) & 0xFF;
+						(m_buffer + index)[1] = (std::bit_cast<uint16_t>(item) >> 010) & 0xFF; // 8
+					}
+
+					index += sizeof(T);
+				}
+			}
+		}
+	}
+
+	bool BeginOptional(uint64_t id, uint32_t length)
+	{
+		// Optional : write PL header
+		// Write PL Header for optional field
+		// PL header format:
+		// - 2 bytes: member id (uint16_t)
+		// - 2 bytes: EMHEADER (length in bytes, uint16_t)
+		// Total: 4 bytes for PL header
+
+		Align(4);  // PL header requires 4-byte alignment
+
+		if (m_length < m_offset + 4)
+			return false;
+
+		if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION)
+		{
+			// Clear PL header area
+			memset(m_buffer + m_offset, 0, 4);
+		}
+
+		// Write member id (lower 16 bits of id)
+		Write<uint16_t>(static_cast<uint16_t>(id));
+		m_offset += 2;
+
+		// Write EMHEADER (length of the parameter value)
+		Write<uint16_t>(static_cast<uint16_t>(length));
+		m_offset += 2;
+
+		return true;
+	}
+
+	bool EndOptional()
+	{
+		return true;
+	}
+
+	bool Bool(bool value)
+	{
+		if (m_length < m_offset + 1)
+			return false;
+
+		Write<uint8_t>(value ? 1 : 0);
+		m_offset += 1;
+		return true;
+	}
+
+	bool Octet(uint8_t value)
+	{
+		if (m_length < m_offset + 1)
+			return false;
+
+		Write<uint8_t>(value);
+		m_offset += 1;
+		return true;
+	}
+
+	bool Short(int16_t value)
+	{
+		Align(2);
+		if (m_length < m_offset + 2)
+			return false;
+
+		Write<int16_t>(value);
+		m_offset += 2;
+		return true;
+	}
+
+	bool Long(int32_t value)
+	{
+		Align(4);
+		if (m_length < m_offset + 4)
+			return false;
+
+		Write<int32_t>(value);
+		m_offset += 4;
+		return true;
+	}
+
+	bool LongLong(int64_t value)
+	{
+		Align(8);
+		if (m_length < m_offset + 8)
+			return false;
+
+		Write<int64_t>(value);
+		m_offset += 8;
+		return true;
+	}
+
+	bool UnsignedShort(uint16_t value)
+	{
+		Align(2);
+		if (m_length < m_offset + 2)
+			return false;
+
+		Write<uint16_t>(value);
+		m_offset += 2;
+		return true;
+
+	}
+
+	bool UnsignedLong(uint32_t value)
+	{
+		Align(4);
+		if (m_length < m_offset + 4)
+			return false;
+
+		Write<uint32_t>(value);
+		m_offset += 4;
+		return true;
+	}
+
+	bool UnsignedLongLong(uint64_t value)
+	{
+		Align(8);
+		if (m_length < m_offset + 8)
+			return false;
+
+		Write<uint64_t>(value);
+		m_offset += 8;
+		return true;
+	}
+
+	bool Float(float value)
+	{
+		Align(4);
+		if (m_length < m_offset + 4)
+			return false;
+
+		Write<float>(value);
+		m_offset += 4;
+		return true;
+	}
+
+	bool Double(double value)
+	{
+		Align(8);
+		if (m_length < m_offset + 8)
+			return false;
+
+		Write<double>(value);
+		m_offset += 8;
+		return true;
+	}
+	
+	bool Char8(char value)
+	{
+		if (m_length < m_offset + 1)
+			return false;
+
+		Write<uint8_t>(static_cast<uint8_t>(value));
+		m_offset += 1;
+		return true;
+	}
+	
+	bool Char16(char16_t value)
+	{
+		if (m_length < m_offset + 2)
+			return false;
+
+		Write<char16_t>(value);
+		m_offset += 2;
+		return true;
+	}
+	
+	bool String8(const std::string& value)
+	{
+		uint32_t strLength = static_cast<uint32_t>(value.length()) + 1;
+		Align(4);
+		if (m_length < m_offset + 4 + strLength)
+			return false;
+		
+		Write<uint32_t>(strLength);
+		m_offset += 4;
+		MemCpy(value.c_str(), strLength);
+		m_offset += strLength;
+		return true;
+	}
+	
+	bool String16(const std::u16string& value)
+	{
+		uint32_t strLength = static_cast<uint32_t>(value.length());
+		Align(4);
+		if (m_length < m_offset + 4 + strLength * 2)
+			return false;
+
+		Write<uint32_t>(strLength);
+		m_offset += 4;
+		MemCpy(value.c_str(), strLength * 2);
+		m_offset += strLength * 2;
+		return true;
+	}
+	
+	bool BeginStructure()
+	{
+		return true;
+	}
+	
+	bool EndStructure()
+	{
+		return true;
+	}
+	
+	bool BeginSequence(uint32_t numElement, bool nonFinalType)
+	{
+		Align(4);
+		if (m_length < m_offset + 4)
+			return false;
+
+		Write<uint32_t>(numElement);
+		m_offset += 4;
+		return true;
+	}
+	
+	bool EndSequence()
+	{
+		return true;
+	}
+
+	void Align(uint32_t alignment)
+	{
+		uint32_t padding = (alignment - ((m_offset - m_orgin) % alignment)) % alignment;
+		m_offset += padding;
+	}
+
+	void Advance(uint32_t size)
+	{
+		m_offset += size;
+	}
+
+	uint8_t* m_buffer;
+	uint32_t m_length;
+	uint32_t m_orgin;
+	uint32_t m_offset;
+};
+
+template<uint32_t VERSION, CdrWriterRole ROLE, std::endian ENDIAN = std::endian::native>
+class CdrCommon : public ICdrWriter
+{
+public:
+	enum AlignKind
+	{
+		ALIGN_1,
+		ALIGN_2,
+		ALIGN_4,
+		ALIGN_8
+	};
+
+	CdrCommon()
+	{
+		m_buffer = nullptr;
+		m_orgin = 0;
+		m_length = 0;
+		m_offset = 0;
+		if constexpr (ROLE == CDR1WRITER_ROLE_CALC_SIZE)
+		{
+			m_length = UINT32_MAX;
+		}
+	}
+
+	CdrCommon(uint8_t* buffer, size_t length)
+	{
+		m_buffer = buffer;
+		m_length = length;
+		m_orgin = 0;
+		m_offset = 0;
+	}
+
+	template<typename T>
+	void Write(uint32_t offset, T data)
+	{
+		if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION)
+		{
+			if constexpr (ENDIAN == std::endian::native || sizeof(T) == 1)
+			{
+				*reinterpret_cast<T*>(m_buffer + m_offset) = data;
+			}
+			else
+			{
+				static_assert(sizeof(T) <= 8 || sizeof(T) % 2 == 0, "Unsupported Primitive Type");
+				if constexpr (sizeof(T) == 8)
+				{
+					(m_buffer + m_offset)[0] = (std::bit_cast<uint64_t>(data) >> 00) & 0xFF;
+					(m_buffer + m_offset)[1] = (std::bit_cast<uint64_t>(data) >> 010) & 0xFF; // 8
+					(m_buffer + m_offset)[2] = (std::bit_cast<uint64_t>(data) >> 020) & 0xFF; // 16
+					(m_buffer + m_offset)[3] = (std::bit_cast<uint64_t>(data) >> 030) & 0xFF; // 24
+					(m_buffer + m_offset)[4] = (std::bit_cast<uint64_t>(data) >> 040) & 0xFF; // 32
+					(m_buffer + m_offset)[5] = (std::bit_cast<uint64_t>(data) >> 050) & 0xFF; // 40
+					(m_buffer + m_offset)[6] = (std::bit_cast<uint64_t>(data) >> 060) & 0xFF; // 48
+					(m_buffer + m_offset)[7] = (std::bit_cast<uint64_t>(data) >> 070) & 0xFF; // 56
+				}
+				else if constexpr (sizeof(T) == 4)
+				{
+					(m_buffer + m_offset)[0] = (std::bit_cast<uint32_t>(data) >> 00) & 0xFF;
+					(m_buffer + m_offset)[1] = (std::bit_cast<uint32_t>(data) >> 010) & 0xFF; // 8
+					(m_buffer + m_offset)[2] = (std::bit_cast<uint32_t>(data) >> 020) & 0xFF; // 16
+					(m_buffer + m_offset)[3] = (std::bit_cast<uint32_t>(data) >> 030) & 0xFF; // 24
+				}
+				else if constexpr (sizeof(T) == 2)
+				{
+					(m_buffer + m_offset)[0] = (std::bit_cast<uint16_t>(data) >> 00) & 0xFF;
+					(m_buffer + m_offset)[1] = (std::bit_cast<uint16_t>(data) >> 010) & 0xFF; // 8
+				}
+			}
+		}
+	}
+
+	template<typename T>
+	void Write(T data)
+	{
+		Write(m_offset, data);
+	}
+
+	template<typename T>
+	void MemCpy(const T* data, size_t length)
+	{
+		if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION)
+		{
+			if constexpr (ENDIAN == std::endian::native || sizeof(T) == 1)
+			{
+				memcpy(m_buffer + m_offset, data, length);
+			}
+			else
+			{
+				static_assert(sizeof(T) <= 8 || sizeof(T) % 2 == 0, "Unsupported Primitive Type");
+				size_t index = 0;
+				for (size_t i = 0; i < length; ++i)
+				{
+					T item = data[i];
+					if constexpr (sizeof(T) == 8)
+					{
+						(m_buffer + index)[0] = (std::bit_cast<uint64_t>(item) >> 00) & 0xFF;
+						(m_buffer + index)[1] = (std::bit_cast<uint64_t>(item) >> 010) & 0xFF; // 8
+						(m_buffer + index)[2] = (std::bit_cast<uint64_t>(item) >> 020) & 0xFF; // 16
+						(m_buffer + index)[3] = (std::bit_cast<uint64_t>(item) >> 030) & 0xFF; // 24
+						(m_buffer + index)[4] = (std::bit_cast<uint64_t>(item) >> 040) & 0xFF; // 32
+						(m_buffer + index)[5] = (std::bit_cast<uint64_t>(item) >> 050) & 0xFF; // 40
+						(m_buffer + index)[6] = (std::bit_cast<uint64_t>(item) >> 060) & 0xFF; // 48
+						(m_buffer + index)[7] = (std::bit_cast<uint64_t>(item) >> 070) & 0xFF; // 56
+					}
+					else if constexpr (sizeof(T) == 4)
+					{
+						(m_buffer + index)[0] = (std::bit_cast<uint32_t>(item) >> 00) & 0xFF;
+						(m_buffer + index)[1] = (std::bit_cast<uint32_t>(item) >> 010) & 0xFF; // 8
+						(m_buffer + index)[2] = (std::bit_cast<uint32_t>(item) >> 020) & 0xFF; // 16
+						(m_buffer + index)[3] = (std::bit_cast<uint32_t>(item) >> 030) & 0xFF; // 24
+					}
+					else if constexpr (sizeof(T) == 2)
+					{
+						(m_buffer + index)[0] = (std::bit_cast<uint16_t>(item) >> 00) & 0xFF;
+						(m_buffer + index)[1] = (std::bit_cast<uint16_t>(item) >> 010) & 0xFF; // 8
+					}
+
+					index += sizeof(T);
+				}
+			}
+		}
+	}
+
+	bool BeginOptional(uint64_t id, uint32_t length)
+	{
+		// Optional : write PL header
+		// Write PL Header for optional field
+		// PL header format:
+		// - 2 bytes: member id (uint16_t)
+		// - 2 bytes: EMHEADER (length in bytes, uint16_t)
+		// Total: 4 bytes for PL header
+
+		Align(4);  // PL header requires 4-byte alignment
+
+		if (m_length < m_offset + 4)
+			return false;
+
+		if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION)
+		{
+			// Clear PL header area
+			memset(m_buffer + m_offset, 0, 4);
+		}
+
+		// Write member id (lower 16 bits of id)
+		Write<uint16_t>(static_cast<uint16_t>(id));
+		m_offset += 2;
+
+		// Write EMHEADER (length of the parameter value)
+		Write<uint16_t>(static_cast<uint16_t>(length));
+		m_offset += 2;
+
+		return true;
+	}
+
+	bool EndOptional()
+	{
+		return true;
+	}
+
+	bool Bool(bool value)
+	{
+		if (m_length < m_offset + 1)
+			return false;
+
+		Write<uint8_t>(value ? 1 : 0);
+		m_offset += 1;
+		return true;
+	}
+
+	bool Octet(uint8_t value)
+	{
+		if (m_length < m_offset + 1)
+			return false;
+
+		Write<uint8_t>(value);
+		m_offset += 1;
+		return true;
+	}
+
+	bool Short(int16_t value)
+	{
+		TmplAlign<ALIGN_2>();
+		if (m_length < m_offset + 2)
+			return false;
+
+		Write<int16_t>(value);
+		m_offset += 2;
+		return true;
+	}
+
+	bool Long(int32_t value)
+	{
+		TmplAlign<ALIGN_4>();
+		if (m_length < m_offset + 4)
+			return false;
+
+		Write<int32_t>(value);
+		m_offset += 4;
+		return true;
+	}
+
+	bool LongLong(int64_t value)
+	{
+		TmplAlign<ALIGN_8>();
+		if (m_length < m_offset + 8)
+			return false;
+
+		Write<int64_t>(value);
+		m_offset += 8;
+		return true;
+	}
+
+	bool UnsignedShort(uint16_t value)
+	{
+		TmplAlign<ALIGN_2>();
+		if (m_length < m_offset + 2)
+			return false;
+
+		Write<uint16_t>(value);
+		m_offset += 2;
+		return true;
+
+	}
+
+	bool UnsignedLong(uint32_t value)
+	{
+		TmplAlign<ALIGN_4>();
+		if (m_length < m_offset + 4)
+			return false;
+
+		Write<uint32_t>(value);
+		m_offset += 4;
+		return true;
+	}
+
+	bool UnsignedLongLong(uint64_t value)
+	{
+		TmplAlign<ALIGN_8>();
+		if (m_length < m_offset + 8)
+			return false;
+
+		Write<uint64_t>(value);
+		m_offset += 8;
+		return true;
+	}
+
+	bool Float(float value)
+	{
+		TmplAlign<ALIGN_4>();
+		if (m_length < m_offset + 4)
+			return false;
+
+		Write<float>(value);
+		m_offset += 4;
+		return true;
+	}
+
+	bool Double(double value)
+	{
+		TmplAlign<ALIGN_8>();
+		if (m_length < m_offset + 8)
+			return false;
+
+		Write<double>(value);
+		m_offset += 8;
+		return true;
+	}
+
+	bool Char8(char value)
+	{
+		if (m_length < m_offset + 1)
+			return false;
+
+		Write<uint8_t>(static_cast<uint8_t>(value));
+		m_offset += 1;
+		return true;
+	}
+
+	bool Char16(char16_t value)
+	{
+		TmplAlign<ALIGN_2>();
+		if (m_length < m_offset + 2)
+			return false;
+
+		Write<char16_t>(value);
+		m_offset += 2;
+		return true;
+	}
+
+	bool String8(const std::string& value)
+	{
+		uint32_t strLength = static_cast<uint32_t>(value.length()) + 1;
+		TmplAlign<ALIGN_4>();
+		if (m_length < m_offset + 4 + strLength)
+			return false;
+
+		Write<uint32_t>(strLength);
+		m_offset += 4;
+		MemCpy(value.c_str(), strLength);
+		m_offset += strLength;
+		return true;
+	}
+
+	bool String16(const std::u16string& value)
+	{
+		uint32_t strLength = static_cast<uint32_t>(value.length());
+		TmplAlign<ALIGN_4>();
+		if (m_length < m_offset + 4 + strLength * 2)
+			return false;
+
+		Write<uint32_t>(strLength);
+		m_offset += 4;
+		MemCpy(value.c_str(), strLength * 2);
+		m_offset += strLength * 2;
+		return true;
+	}
+
+	void Align(uint32_t alignment)
+	{
+		if constexpr (VERSION == 2)
+		{
+			if (alignment == 8)
+			{
+				// XCDR2 Max Alignment is 4 bytes
+				alignment = 4;
+			}
+		}
+
+		uint32_t padding = (alignment - ((m_offset - m_orgin) % alignment)) % alignment;
+		m_offset += padding;
+	}
+
+	template<AlignKind TALIGN>
+	void TmplAlign()
+	{
+		uint32_t alignment = 1;
+		switch (TALIGN)
+		{
+		case ALIGN_2:
+			alignment = 2;
+			break;
+		case ALIGN_4:
+			alignment = 4;
+			break;
+		case ALIGN_8:
+			if constexpr (VERSION == 1)
+			{
+				alignment = 8;
+			}
+			else if constexpr (VERSION == 2)
+			{
+				alignment = 4;
+			}
+
+			break;
+			
+		}
+
+		uint32_t padding = (alignment - ((m_offset - m_orgin) % alignment)) % alignment;
+		m_offset += padding;
+	}
+
+	void Advance(uint32_t size)
+	{
+		m_offset += size;
+	}
+
+	uint8_t* m_buffer;
+	uint32_t m_length;
+	uint32_t m_orgin;
+	uint32_t m_offset;
+
+protected:
+
+};
+
+template<CdrWriterRole ROLE, std::endian ENDIAN = std::endian::native>
+class Cdr2Writer : public CdrCommon<2, ROLE, ENDIAN>
+{
+	using Base = CdrCommon<2, ROLE, ENDIAN>;
+	using Extensibility = meshi::dds::xtypes::Extensibility;
+	using MemberId = meshi::dds::xtypes::MemberId;
+	using AlignKind = Base::AlignKind;
+public:
+	enum class EncodingFormat : uint8_t
+	{
+		Plain = 0x06,
+		Delimited = 0x08,
+		Pl = 0x0A
+	};
+	
+	using CdrCommon<2, ROLE, ENDIAN>::CdrCommon;
+
+	void WriteCdrHeader() override
+	{
+		if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION)
+		{
+			// CDR1 Header
+			// - 1 byte: options
+			// - 3 bytes: unused, set to 0
+			Base::m_buffer[0] = 0x00; // options
+			Base::m_buffer[1] = (ENDIAN == std::endian::little ? 1 : 0); // endianness: little endian
+			Base::m_buffer[2] = 0x00; // unused
+			Base::m_buffer[3] = 0x00; // unused
+		}
+
+		Base::m_orgin = 4;
+		Base::m_offset += 4;
+	}
+
+	bool BeginAggregated(meshi::dds::xtypes::Extensibility extensibility) override
+	{
+		EncodingFormat format = EncodingFormat::Plain;
+		switch (extensibility)
+		{
+		case Extensibility::Final:
+			format = EncodingFormat::Plain;
+			break;
+		case Extensibility::Appendable:
+			format = EncodingFormat::Delimited;
+			break;
+		case Extensibility::Mutable:
+			format = EncodingFormat::Pl;
+			break;
+		default:
+			return false;
+		}
+
+		if (m_encodingFormatStack.empty())
+		{
+			if constexpr (ROLE == CDR1WRITER_ROLE_SERIALIZATION) {
+				Base::m_buffer[1] += static_cast<uint8_t>(format);
+			}
+		}
+
+		switch (format)
+		{
+		case EncodingFormat::Plain:
+			// DO NOTHING
+			break;
+		case EncodingFormat::Delimited:
+			// Append Delimiter header
+			Base::Align(4);
+			Base::Advance(4);
+			m_delimiterStack.push(Base::m_offset);
+			break;
+
+		case EncodingFormat::Pl:
+			// TODO: Not implmented yet!
+			Base::Align(4);
+			Base::Advance(4);
+			m_delimiterStack.push(Base::m_offset);
+			break;
+		}
+
+		m_encodingFormatStack.push(format);
+		return true;
+	}
+
+	bool EndAggregated() override
+	{
+		if (m_encodingFormatStack.empty())
+		{
+			return false;
+		}
+
+		auto format = m_encodingFormatStack.top();
+		m_encodingFormatStack.pop();
+
+		if (format == EncodingFormat::Plain)
+		{
+			return true;
+		}
+
+		if (format == EncodingFormat::Delimited)
+		{
+			auto offset = m_delimiterStack.top();
+			m_delimiterStack.pop();
+			uint32_t delimiterHeader;
+			uint32_t size = Base::m_offset - offset;
+			delimiterHeader = size;
+			delimiterHeader = delimiterHeader | ((ENDIAN == std::endian::little) ? (1 << 31) : 0);
+			Base::Write(offset - 4, delimiterHeader);
+		}
+
+		if (format == EncodingFormat::Pl)
+		{
+			// Append PID_LIST_END
+
+			auto offset = m_delimiterStack.top();
+			m_delimiterStack.pop();
+			uint32_t delimiterHeader;
+			uint32_t size = Base::m_offset - offset;
+			delimiterHeader = size;
+			delimiterHeader = delimiterHeader | ((ENDIAN == std::endian::little) ? (1 << 31) : 0);
+			Base::Write(offset - 4, delimiterHeader);
+
+			// TODO: Not implemented yet!
+		}
+
+		return true;
+	}
+
+	bool BeginMember(MemberId id, bool mustUnderstand, uint8_t lengthCodeLevel) override
+	{
+		if (m_encodingFormatStack.top() != EncodingFormat::Pl)
+		{
+			return true;
+		}
+
+		if (lengthCodeLevel == 0 || lengthCodeLevel > 7)
+		{
+			return false;
+		}
+
+		uint32_t memberHeader = mustUnderstand ? (1 << 31) : 0;
+		memberHeader += lengthCodeLevel << 28;
+		memberHeader += id;
+
+		if (!Base::UnsignedLong(memberHeader))
+		{
+			return false;
+		}
+
+		if (lengthCodeLevel == 4)
+		{
+			Base::Advance(4);
+		}
+
+		m_memberStack.emplace(id, Base::m_offset, lengthCodeLevel);
+
+		return true;
+	}
+
+	bool EndMember() override
+	{
+		if (m_encodingFormatStack.top() != EncodingFormat::Pl)
+		{
+			return true;
+		}
+
+		auto member = m_memberStack.top();
+		m_memberStack.pop();
+
+		if (std::get<2>(member) == 4)
+		{
+			auto offset = std::get<1>(member);
+			auto size = Base::m_offset - offset;
+			Base::Write(offset - 4, size);
+		}
+
+		return true;
+	}
+
+	bool BeginDiscriminator(uint8_t lengthCodeLevel) override
+	{
+		if (m_encodingFormatStack.top() != EncodingFormat::Pl)
+		{
+			return true;
+		}
+
+		if (lengthCodeLevel == 0 || lengthCodeLevel > 7)
+		{
+			return false;
+		}
+
+		uint32_t memberHeader = (1 << 31);
+		memberHeader += lengthCodeLevel << 28;
+
+		if (!Base::UnsignedLong(memberHeader))
+		{
+			return false;
+		}
+
+		if (lengthCodeLevel == 4)
+		{
+			Base::Advance(4);
+		}
+
+		m_memberStack.emplace(0, Base::m_offset, lengthCodeLevel);
+		return true;
+	}
+
+	bool EndDiscriminator() override
+	{
+		if (m_encodingFormatStack.top() != EncodingFormat::Pl)
+		{
+			return true;
+		}
+
+		auto member = m_memberStack.top();
+		m_memberStack.pop();
+
+		if (std::get<2>(member) == 4)
+		{
+			auto offset = std::get<1>(member);
+			auto size = Base::m_offset - offset;
+			Base::Write(offset - 4, size);
+		}
+
+		return true;
+	}
+
+	bool BeginSequence(uint32_t numElement, bool nonFinalType)
+	{
+		// Reserve Deheader
+		uint32_t offset = 0;;
+		if (nonFinalType)
+		{
+			Base::UnsignedLong(0);
+			offset = Base::m_offset;
+		}
+		
+		if (!Base::UnsignedLong(numElement))
+		{
+			return false;
+		}
+
+		m_delimiterStack.push(offset);
+		return true;
+	}
+
+	bool EndSequence() override
+	{
+		if (m_delimiterStack.empty())
+		{
+			return false;
+		}
+
+		auto offset = m_delimiterStack.top();
+		
+		m_delimiterStack.pop();
+
+		if (offset != 0)
+		{
+			auto size = Base::m_offset - offset;
+			size += (ENDIAN == std::endian::little) ? (1 << 31) : 0;
+			Base::Write(offset - 4, size);
+		}
+
+		return true;
+	}
+
+	bool BeginArray(bool nonFinalType = true) override
+	{
+		// Reserve Deheader
+		uint32_t offset = 0;;
+		if (!nonFinalType)
+		{
+			if (!Base::UnsignedLong(0))
+			{
+				return false;
+			}
+
+			offset = Base::m_offset;
+		}
+
+		m_delimiterStack.push(offset);
+		return true;
+	}
+
+	bool EndArray() override
+	{
+		if (m_delimiterStack.empty())
+		{
+			return false;
+		}
+
+		auto offset = m_delimiterStack.top();
+
+		m_delimiterStack.pop();
+
+		if (offset == 0)
+		{
+			auto size = Base::m_offset - offset;
+			size += (ENDIAN == std::endian::little) ? (1 << 31) : 0;
+			Base::Write(offset - 4, size);
+		}
+
+		return true;
+	}
+
+	bool BeginOptional(MemberId id, bool none) override
+	{
+		if (m_encodingFormatStack.empty())
+		{
+			return false;
+		}
+
+		auto encoding = m_encodingFormatStack.top();
+		if (encoding == EncodingFormat::Plain || encoding == EncodingFormat::Pl)
+		{
+			if (!Base::Bool(!none))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	bool EndOptional()
+	{
+		return true;
+	}
+
+	std::stack<EncodingFormat> m_encodingFormatStack;
+	std::stack<uint32_t> m_delimiterStack;
+	std::stack<std::tuple<MemberId, uint32_t, uint8_t>> m_memberStack;
+};
+
+bool SerializePlainCollectionHeader(ICdrWriter* writer, const meshi::dds::xtypes::PlainCollectionHeader& header)
+{
+	if (!writer->BeginAggregated())
+	{
+		return false;
+	}
+
+	writer->Octet(header.equivKind);
+	writer->UnsignedShort(header.elementFlags.value);
+
+	return writer->EndAggregated();
+}
+
+template<typename T>
+struct SequenceElementSerializerTrait {
+	bool operator()(ICdrWriter* writer, const T& element) { return false; }
+};
+
+template<typename T>
+bool SerializeElement(ICdrWriter* writer, const T& element)
+{
+	if constexpr (std::is_same_v<T, uint8_t>)
+	{
+		return writer->Octet(element);
+	}
+	else if constexpr (std::is_same_v<T, bool>)
+	{
+		return writer->Bool(element);
+	}
+	else if constexpr (std::is_same_v<T, uint16_t>)
+	{
+		return writer->UnsignedShort(element);
+	}
+	else if constexpr (std::is_same_v<T, int16_t>)
+	{
+		return writer->Short(element);
+	}
+	else if constexpr (std::is_same_v<T, int32_t>)
+	{
+		return writer->Long(element);
+	}
+	else if constexpr (std::is_same_v<T, uint32_t>)
+	{
+		return writer->UnsignedLong(element);
+	}
+	else if constexpr (std::is_same_v<T, int64_t>)
+	{
+		return writer->LongLong(element);
+	}
+	else if constexpr (std::is_same_v<T, uint64_t>)
+	{
+		return writer->UnsignedLongLong(element);
+	}
+	else if constexpr (std::is_same_v<T, float>)
+	{
+		return writer->Float(element);
+	}
+	else if constexpr (std::is_same_v<T, double>)
+	{
+		return writer->Double(element);
+	}
+	else if constexpr (std::is_same_v<T, char>)
+	{
+		return writer->Char8(element);
+	}
+	else if constexpr (std::is_same_v<T, char16_t>)
+	{
+		return writer->Char16(element);
+	}
+	else if constexpr (std::is_same_v<T, std::string>)
+	{
+		return writer->String8(element);
+	}
+	else if constexpr (std::is_same_v<T, std::u16string>)
+	{
+		return writer->String16(element);
+	}
+	else
+	{
+		return SequenceElementSerializerTrait<T>{}(writer, element);
+	}
+}
+
+template<typename T>
+bool SerializeSequence(ICdrWriter* writer, const BoundedSequence<T>& sequence)
+{
+	writer->BeginSequence(sequence.size(), ExtensibilityOf<T> != Extensibility::Final);
+	for (const auto& element : sequence)
+	{
+		if (!SerializeElement(writer, element))
+		{
+			return false;
+		}
+	}
+
+	writer->EndSequence();
+	return true;
+}
+
+bool SerializeTypeIdentifier(ICdrWriter* writer, const TypeIdentifier& typeId);
+
+bool SerializeSeqSmallDefn(ICdrWriter* writer, const PlainSequenceSElemDefn& seqDefn)
+{
+	if(!writer->BeginAggregated())
+	{
+		return false;
+	}
+
+	if (!SerializePlainCollectionHeader(writer, seqDefn.header))
+	{
+		return false;
+	}
+
+	if (!SerializeSequence(writer, seqDefn.bound))
+	{
+		return false;
+	}
+
+	if (!SerializeTypeIdentifier(writer, *seqDefn.element_identifier))
+	{
+		return false;
+	}
+
+	return writer->EndAggregated();
+}
+
+bool SerializeSeqLargeDefn(ICdrWriter* writer, const PlainSequenceLElemDefn& seqDefn)
+{
+	if (!writer->BeginAggregated())
+	{
+		return false;
+	}
+
+	if (!SerializePlainCollectionHeader(writer, seqDefn.header))
+	{
+		return false;
+	}
+
+	if (!SerializeSequence(writer, seqDefn.bound))
+	{
+		return false;
+	}
+
+	if (!SerializeTypeIdentifier(writer, *seqDefn.element_identifier))
+	{
+		return false;
+	}
+
+	return writer->EndAggregated();
+}
+
+bool SerializeArraySmallDefn(ICdrWriter* writer, const PlainArraySElemDefn& defn)
+{
+	if (!writer->BeginAggregated())
+	{
+		return false;
+	}
+
+	if (!SerializePlainCollectionHeader(writer, defn.header))
+	{
+		return false;
+	}
+
+	if (!SerializeSequence(writer, defn.arrayBoundSeq))
+	{
+		return false;
+	}
+
+	if (!SerializeTypeIdentifier(writer, *defn.element_identifier))
+	{
+		return false;
+	}
+
+	return writer->EndAggregated();
+}
+
+bool SerializeArrayLargeDefn(ICdrWriter* writer, const PlainArrayLElemDefn& defn)
+{
+	if (!writer->BeginAggregated())
+	{
+		return false;
+	}
+
+	if (!SerializePlainCollectionHeader(writer, defn.header))
+	{
+		return false;
+	}
+
+	if (!SerializeSequence(writer, defn.arrayBoundSeq))
+	{
+		return false;
+	}
+
+	if (!SerializeTypeIdentifier(writer, *defn.element_identifier))
+	{
+		return false;
+	}
+
+	return writer->EndAggregated();
+}
+
+bool SerializeTypeObjectHashId(ICdrWriter* writer, const TypeObjectHashId& hashId)
+{
+	if (!writer->Octet(hashId._d))
+	{
+		return false;
+	}
+
+	for (uint8_t value : hashId.hash)
+	{
+		if (!writer->Octet(value))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool SerializeStronglyConnectedComponentId(ICdrWriter* writer, const StronglyConnectedComponentId& id)
+{
+	if (!writer->BeginAggregated(ExtensibilityOf<StronglyConnectedComponentId>))
+	{
+		return false;
+	}
+
+	if (!SerializeTypeObjectHashId(writer, id.sc_component_id))
+	{
+		return false;
+	}
+
+	if (!writer->Long(id.scc_length))
+	{
+		return false;
+	}
+
+	if (!writer->Long(id.scc_index))
+	{
+		return false;
+	}
+
+	return writer->EndAggregated();
+}
+
+bool SerializeExtendedTypeDefn(ICdrWriter* writer, const ExtendedTypeDefn& d)
+{
+	writer->BeginAggregated(ExtensibilityOf<ExtendedTypeDefn>);
+	writer->EndAggregated();
+	return true;
+}
+
+bool SerializeTypeIdentifier(ICdrWriter* writer, const TypeIdentifier& typeId)
+{
+	writer->BeginAggregated(ExtensibilityOf<TypeIdentifier>);
+	writer->BeginDiscriminator(0);
+	writer->Octet(typeId.d());
+	writer->EndDiscriminator();
+	// Serialize based on typeId.d()
+	switch (typeId.d())
+	{
+	case meshi::dds::xtypes::TI_STRING8_SMALL:
+	case meshi::dds::xtypes::TI_STRING16_SMALL:
+		if (!writer->Octet(typeId.string_sdefn().bound))
+		{
+			return false;
+		}
+
+		break;
+	case meshi::dds::xtypes::TI_STRING8_LARGE:
+	case meshi::dds::xtypes::TI_STRING16_LARGE:
+		if (!writer->UnsignedLong(typeId.string_ldefn().bound))
+		{
+			return false;
+		}
+
+		break;
+	case meshi::dds::xtypes::TI_PLAIN_SEQUENCE_SMALL:
+		if (!SerializeSeqSmallDefn(writer, typeId.seq_sdefn()))
+		{
+			return false;
+		}
+
+		break;
+	case meshi::dds::xtypes::TI_PLAIN_SEQUENCE_LARGE:
+		if (!SerializeSeqLargeDefn(writer, typeId.seq_ldefn()))
+		{
+			return false;
+		}
+
+		break;
+	case meshi::dds::xtypes::TI_PLAIN_ARRAY_SMALL:
+		if (!SerializeArraySmallDefn(writer, typeId.array_sdefn()))
+		{
+			return false;
+		}
+
+		break;
+	case meshi::dds::xtypes::TI_PLAIN_ARRAY_LARGE:
+		if (!SerializeArrayLargeDefn(writer, typeId.array_ldefn()))
+		{
+			return false;
+		}
+
+		break;
+	case meshi::dds::xtypes::TI_PLAIN_MAP_LARGE:
+	case meshi::dds::xtypes::TI_PLAIN_MAP_SMALL:
+		// TODO: Current not supported!
+		return false;
+	case meshi::dds::xtypes::TI_STRONGLY_CONNECTED_COMPONENT:
+		if (!SerializeStronglyConnectedComponentId(writer, typeId.sc_component_id()))
+		{
+			return false;
+		}
+
+		break;
+	default:
+		if (!SerializeExtendedTypeDefn(writer, typeId.extended_defn()))
+		{
+			return false;
+		}
+
+		break;
+	}
+
+	writer->EndAggregated();
+
+	return true;
+}
+
+bool SerializeCompleteTypeDetail(ICdrWriter* writer, const CompleteTypeDetail& detail)
+{
+	writer->BeginAggregated(ExtensibilityOf<CompleteTypeDetail>);
+	// Serialize ann_builtin
+	if (detail.ann_builtin != nullptr)
+	{
+		// FIXME: Not Support anno_builtin yet
+		writer->BeginOptional(0, 0);
+	}
+	else
+	{
+		writer->BeginOptional(0, 0);
+	}
+
+	writer->EndOptional();
+
+	// Serialize ann_custom
+	if (detail.ann_custom != nullptr)
+	{
+		// FIXME: Not Support anno_custom yet
+		writer->BeginOptional(1, 0);
+	}
+	else
+	{
+		writer->BeginOptional(1, 0);
+	}
+
+	writer->EndOptional();
+
+	// Serialize type_name
+	writer->String8(detail.type_name);
+	
+	writer->EndAggregated();
+	return true;
+}
+
+bool SerializeCompleteStructHeader(ICdrWriter* writer, const CompleteStructHeader& header)
+{
+	writer->BeginAggregated(ExtensibilityOf<CompleteStructHeader>);
+	
+	// Serialize base_type
+	writer->BeginMember(0, false, 4);
+	SerializeTypeIdentifier(writer, header.base_type);
+	writer->EndMember();
+	
+	// Serialize detail
+	writer->BeginMember(1, false, 4);
+	SerializeCompleteTypeDetail(writer, header.detail);
+	writer->EndMember();
+	
+	writer->EndAggregated();
+	return true;
+}
+
+bool SerializeCommonStructMember(ICdrWriter* writer, const CommonStructMember& member)
+{
+	writer->BeginAggregated(ExtensibilityOf<CommonStructMember>);
+
+	writer->UnsignedLong(member.member_id);
+	writer->UnsignedShort(member.member_flags.value);
+	SerializeTypeIdentifier(writer, member.member_type_id);
+
+	writer->EndAggregated();
+	return true;
+}
+
+bool SerializCompleteMemberDetail(ICdrWriter* writer, const CompleteMemberDetail& member)
+{
+	writer->BeginAggregated(ExtensibilityOf<CompleteMemberDetail>);
+	writer->String8(member.type_name);
+	// Serialize ann_builtin
+	if (member.ann_builtin != nullptr)
+	{
+		// FIXME: Not Support anno_builtin yet
+		writer->BeginOptional(1, true);
+	}
+	else
+	{
+		writer->BeginOptional(1, true);
+	}
+
+	writer->EndOptional();
+
+	// Serialize ann_custom
+	if (member.ann_custom != nullptr)
+	{
+		// FIXME: Not Support ann_custom yet
+		writer->BeginOptional(2, true);
+	}
+	else
+	{
+		writer->BeginOptional(2, true);
+	}
+
+	writer->EndOptional();
+
+	writer->EndAggregated();
+	return true;
+}
+
+template<>
+struct SequenceElementSerializerTrait<CompleteStructMember>{
+	bool operator()(ICdrWriter* writer, const CompleteStructMember& element) { 
+		if (!writer->BeginAggregated(ExtensibilityOf<CompleteStructMember>))
+		{
+			return false;
+		}
+
+		if (!SerializeCommonStructMember(writer, element.common))
+		{
+			return false;
+		}
+
+		if (!SerializCompleteMemberDetail(writer, element.detail))
+		{
+			return false;
+		}
+
+		return writer->EndAggregated();
+	}
+};
+
+bool SerializeCompleteStructType(ICdrWriter* writer, const CompleteStructType& structure)
+{
+	//StructTypeFlag type_flags;
+	//CompleteStructHeader header;
+	//CompleteStructMemberSeq member_seq;
+	writer->BeginAggregated(ExtensibilityOf<CompleteStructType>);
+	// Serialize type_flags
+	writer->BeginMember(0, false, 2);
+	writer->UnsignedShort(structure.struct_flags.value);
+	writer->EndMember();
+
+	// Serialize header
+	writer->BeginMember(1, false, 5);
+	if (!SerializeCompleteStructHeader(writer, structure.header))
+	{
+		return false;
+	}
+
+	writer->EndMember();
+
+	// Serialize member_seq
+	writer->BeginMember(2, false, 5);
+	SerializeSequence(writer, structure.member_seq);
+	writer->EndMember();
+
+	writer->EndAggregated();
+	return true;
+}
+
+bool SerializeCompleteTypeObject(ICdrWriter* writer, const CompleteTypeObject& typeObject)
+{
+	writer->BeginAggregated(ExtensibilityOf<CompleteTypeObject>);
+	writer->BeginDiscriminator(1);
+	writer->Octet(typeObject.d());
+	writer->EndDiscriminator();
+
+	switch (typeObject.d())
+	{
+		case meshi::dds::xtypes::TK_ALIAS:
+			// Serialize alias_type
+			break;
+		case meshi::dds::xtypes::TK_ANNOTATION:
+			// Serialize annotation_type
+			break;
+		case meshi::dds::xtypes::TK_STRUCTURE:
+			// Serialize struct_type
+			writer->BeginMember(2, false, 4);
+			if (!SerializeCompleteStructType(writer, typeObject.struct_type()))
+			{
+				return false;
+			}
+
+			writer->EndMember();
+
+
+				return true;
+			
+			break;
+	}
+
+	writer->EndAggregated();
+
+	return true;
+}
+
+bool GenerateMd5(std::span<uint8_t> data, std::array<uint8_t, 16>& md5Ret)
+{
+#if defined(_WIN32)
+	BOOL bResult = false;
+	HCRYPTPROV hProv = 0;
+	HCRYPTHASH hHash = 0;
+	DWORD dwStatus;
+	DWORD cbHash;
+	// Get handle to the crypto provider
+	if (!CryptAcquireContext(&hProv,
+		NULL,
+		NULL,
+		PROV_RSA_FULL,
+		CRYPT_VERIFYCONTEXT))
+	{
+		dwStatus = GetLastError();
+		printf("CryptAcquireContext failed: %d\n", dwStatus);
+		return false;
+	}
+
+	if (!CryptCreateHash(hProv, CALG_MD5, 0, 0, &hHash))
+	{
+		dwStatus = GetLastError();
+		printf("CryptCreateHash failed: %d\n", dwStatus);
+		CryptReleaseContext(hProv, 0);
+		return false;
+	}
+
+	if (!CryptHashData(hHash, data.data(), data.size(), 0))
+	{
+		dwStatus = GetLastError();
+		printf("CryptHashData failed: %d\n", dwStatus);
+		CryptReleaseContext(hProv, 0);
+		CryptDestroyHash(hHash);
+		return false;
+	}
+
+	cbHash = md5Ret.size();
+	if (!CryptGetHashParam(hHash, HP_HASHVAL, md5Ret.data(), &cbHash, 0))
+	{
+		CryptDestroyHash(hHash);
+		CryptReleaseContext(hProv, 0);
+		return false;
+	}
+
+	CryptDestroyHash(hHash);
+	CryptReleaseContext(hProv, 0);
+
+	return true;
+#endif
+}
+
+TypeObjectHashId CalculateTypeEquivalenceHash(const TypeObject& typeObject)
+{
+	TypeObjectHashId objHashId = { 0 };
+	if (typeObject.d() == EK_COMPLETE)
+	{
+		objHashId._d = EK_COMPLETE;
+		Cdr2Writer<CDR1WRITER_ROLE_CALC_SIZE, std::endian::little> writerForCalcSerializeSize;
+		writerForCalcSerializeSize.WriteCdrHeader();
+		SerializeCompleteTypeObject(&writerForCalcSerializeSize, typeObject.complete_type());
+		std::vector<uint8_t> serializedTypeObject;
+		serializedTypeObject.resize(((writerForCalcSerializeSize.m_offset + 3) / 4) * 4);
+
+		Cdr2Writer<CDR1WRITER_ROLE_SERIALIZATION, std::endian::little> writer{ serializedTypeObject.data(), serializedTypeObject.size() };
+		writer.WriteCdrHeader();
+		SerializeCompleteTypeObject(&writer, typeObject.complete_type());
+		std::array<uint8_t, 16> md5{};
+		GenerateMd5(std::span<uint8_t>{serializedTypeObject}, md5);
+		memcpy(objHashId.hash.data(), md5.data(), 14);
+	}
+	else if (typeObject.d() == EK_MINIMAL)
+	{
+		// TODO: not implmeneted yet!
+	}
+
+	return objHashId;
+}
+
+class CdrReader
+{
+
+public:
+	void AddTypeObject(const CompleteTypeObject& typeObject)
+	{
+
+	}
+
+	void RegisterHandler(const EquivalenceHash& typeHash, ICdrHandler* handler);
+
+	bool Deserialize(const uint8_t* serPayload, uint32_t length)
+	{
+
+	}
+};
+
+template<>
+struct std::less<meshi::dds::xtypes::EquivalenceHash>
+{
+	using T = meshi::dds::xtypes::EquivalenceHash;
+	bool operator()(const T& _Left, const T& _Right) const
+	{
+		return memcmp(_Left.data(), _Right.data(), sizeof(T)) < 0;
+	}
+};
+
+class TypeLibrary
+{
+public:
+
+private:
+	std::map<meshi::dds::xtypes::EquivalenceHash, meshi::dds::xtypes::CompleteTypeObject> m_typeObjectTable;
+};
+
+int main()
+{
+	using namespace meshi::dds::xtypes;
+
+	CompleteTypeObject HelloMsgCompleteTypeObject{
+		CompleteStructType{
+			StructTypeFlag{},
+			CompleteStructHeader{
+				TypeIdentifier{TK_NONE},
+				CompleteTypeDetail{
+					nullptr,
+					nullptr,
+					"Hello::Msg"}},
+			CompleteStructMemberSeq{
+				CompleteStructMember{
+					CommonStructMember{
+						1,
+						StructMemberFlag{},
+						TypeIdentifier{TK_INT32}},
+					CompleteMemberDetail{
+						"userId",
+						nullptr,
+						nullptr}},
+				CompleteStructMember{
+					CommonStructMember{
+						2,
+						StructMemberFlag{},
+						TypeIdentifier{TK_STRING8}},
+					CompleteMemberDetail{
+						"message",
+						nullptr,
+						nullptr}}
+			}
+		}
+	};
+
+	TypeObject HelloMsgTypeObject{ HelloMsgCompleteTypeObject };
+	auto typeHashId = CalculateTypeEquivalenceHash(HelloMsgTypeObject);
+
+	return 0;
+}
