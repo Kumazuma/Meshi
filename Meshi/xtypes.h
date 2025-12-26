@@ -404,6 +404,12 @@ namespace meshi
 						case TI_STRONGLY_CONNECTED_COMPONENT:
 							new (&sc_component_id) StronglyConnectedComponentId();
 							break;
+
+							// ============  The remaining cases - use EquivalenceKind ========= 
+						case EK_COMPLETE:
+						case EK_MINIMAL:
+							new (&equivalence_hash) EquivalenceHash();
+							break;
 						default:
 							new (&extended_defn) ExtendedTypeDefn();
 							break;
@@ -443,6 +449,10 @@ namespace meshi
 								break;
 							case TI_PLAIN_MAP_LARGE:
 								new (&map_ldefn) PlainMapLTypeDefn(rhs.map_ldefn);
+								break;
+							case EK_COMPLETE:
+							case EK_MINIMAL:
+								new (&equivalence_hash) EquivalenceHash(rhs.equivalence_hash);
 								break;
 							case TI_STRONGLY_CONNECTED_COMPONENT:
 								new (&sc_component_id) StronglyConnectedComponentId(rhs.sc_component_id);
@@ -612,6 +622,14 @@ namespace meshi
 						throw std::runtime_error("");
 					}
 					return value.sc_component_id;
+				}
+
+				const EquivalenceHash& equivalence_hash() const {
+					if (_d != EK_COMPLETE && _d != EK_MINIMAL) {
+						throw std::runtime_error("");
+					}
+
+					return value.equivalence_hash;
 				}
 
 				const ExtendedTypeDefn& extended_defn() const {
