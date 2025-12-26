@@ -1759,23 +1759,6 @@ TypeObjectHashId CalculateTypeEquivalenceHash(const TypeObject& typeObject)
 	return objHashId;
 }
 
-class CdrReader
-{
-
-public:
-	void AddTypeObject(const CompleteTypeObject& typeObject)
-	{
-
-	}
-
-	void RegisterHandler(const EquivalenceHash& typeHash, ICdrHandler* handler);
-
-	bool Deserialize(const uint8_t* serPayload, uint32_t length)
-	{
-
-	}
-};
-
 template<>
 struct std::less<meshi::dds::xtypes::EquivalenceHash>
 {
@@ -1788,10 +1771,154 @@ struct std::less<meshi::dds::xtypes::EquivalenceHash>
 
 class TypeLibrary
 {
+	struct CppTypeObject
+	{
+		uint32_t alignment;
+		uint32_t typeSizeOf;
+		CompleteTypeObject typeObject;
+	};
+
 public:
+	bool RegisterType(const CompleteTypeObject& typeObject)
+	{
+		TypeObject to{ typeObject };
+		auto typeHashId = CalculateTypeEquivalenceHash(to);
+		if (typeHashId._d != EK_COMPLETE)
+		{
+			return false;
+		}
+
+		if (m_typeObjectTable.count(typeHashId.hash) != 0)
+		{
+			return false;
+		}
+
+		uint32_t alignment = GetAlignment(typeObject);
+
+		// Alignment와 TypeSizeOf를 계산한다.
+
+		return true;
+	}
+
+	uint32_t GetAlignment(const TypeIdentifier& typeIdentifier)
+	{
+		switch (typeIdentifier.d())
+		{
+		case TK_BYTE:
+		case TK_CHAR8:
+		case TK_BOOLEAN:
+			return 1;
+		case TK_INT16:
+		case TK_UINT16:
+		case TK_CHAR16:
+			return 2;
+		case TK_INT32:
+		case TK_UINT32:
+		case TK_FLOAT32:
+			return 4;
+		case TK_INT64:
+		case TK_UINT64:
+		case TK_FLOAT64:
+			return 8;
+		case TK_STRING8:
+		case TI_STRING8_SMALL:
+		case TI_STRING8_LARGE:
+			return std::alignment_of_v<std::string>;
+		case TK_STRING16:
+		case TI_STRING16_SMALL:
+		case TI_STRING16_LARGE:
+			return std::alignment_of_v<std::u16string>;
+		case TI_PLAIN_SEQUENCE_SMALL:
+		case TI_PLAIN_SEQUENCE_LARGE:
+			return std::alignment_of_v<std::vector<uintptr_t>>;
+		case TI_PLAIN_ARRAY_SMALL:
+			return GetAlignment(*typeIdentifier.array_sdefn().element_identifier);
+		case TI_PLAIN_ARRAY_LARGE:
+			return GetAlignment(*typeIdentifier.array_ldefn().element_identifier);
+
+		case TI_STRONGLY_CONNECTED_COMPONENT:
+			// NOTE: TI_STRONGLY_CONNECTED_COMPONENT is not support in current version.
+			return 0;
+
+		case EK_COMPLETE:
+			if (auto it = m_typeObjectTable.find(typeIdentifier.equivalence_hash())
+				; it != m_typeObjectTable.end())
+			{
+				if (it->second.alignment == 0)
+				{
+					it->second.alignment = GetAlignment(it->second.typeObject);
+				}
+
+				return it->second.alignment;
+			}
+
+			return 0;
+
+		case EK_MINIMAL:
+			// NOTE: Minimal is not support in current version.
+			return 0;
+
+		default:
+			return 0;
+		}
+	}
+
+	uint32_t GetAlignment(const CompleteStructType& typeObject)
+	{
+		if (typeObject.header.base_type.d() != TK_NONE)
+		{
+			// NOTE: Inheritance is unsupported in Current Version
+			return 0;
+		}
+
+		if (typeObject.member_seq.size() == 0)
+		{
+			// NOTE: Empty structure is unsupported in Current Version
+			return 0;
+		}
+
+		auto& firstField = typeObject.member_seq.front();
+		return GetAlignment(firstField.common.member_type_id);
+	}
+
+	uint32_t GetAlignment(const CompleteTypeObject& typeObject)
+	{
+		static_assert(std::alignment_of_v<std::vector<std::string>> == sizeof(void*), "Unsupported C++ Runtime");
+		static_assert(sizeof(std::vector<std::string>) == sizeof(std::vector<char>), "Unsupported C++ Runtime");
+		switch (typeObject.d())
+		{
+		case meshi::dds::xtypes::TK_ALIAS:
+			return GetAlignment(typeObject.alias_type().body.common.related_type);
+		case TK_UNION:
+			return GetAlignment(typeObject.union_type().discriminator.common.type_id);
+		case TK_STRUCTURE:
+			return GetAlignment(typeObject.struct_type());
+		}
+	}
 
 private:
-	std::map<meshi::dds::xtypes::EquivalenceHash, meshi::dds::xtypes::CompleteTypeObject> m_typeObjectTable;
+	std::map<EquivalenceHash, CppTypeObject> m_topLevelTypeObjectTable;
+	std::map<meshi::dds::xtypes::EquivalenceHash, CppTypeObject> m_typeObjectTable;
+};
+
+class CdrReader
+{
+public:
+
+	void AddTypeObject(const CompleteTypeObject& typeObject)
+	{
+
+	}
+
+	void RegisterHandler(const EquivalenceHash& typeHash, ICdrHandler* handler);
+
+	bool Deserialize(const uint8_t* serPayload, uint32_t length)
+	{
+
+	}
+
+private:
+	std::shared_ptr<TypeLibrary> m_typeLibrary;
 };
 
 int main()
