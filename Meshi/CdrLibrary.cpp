@@ -801,6 +801,29 @@ public:
 	std::stack<std::tuple<MemberId, uint32_t, uint8_t>> m_memberStack;
 };
 
+
+namespace Hello {
+	struct Msg
+	{
+		Long userId;
+		std::string message;
+		uint8_t tmp;
+	};
+
+	struct Msg2
+	{
+		Msg obj;
+		std::string message;
+	};
+
+	const uint32_t MSG_USER_ID = offsetof(Msg, userId);
+	const uint32_t MSG_MESSAGE = offsetof(Msg, message);
+	const uint32_t MSG2_OBJ = offsetof(Msg2, obj);
+	const uint32_t MSG2_MESSAGE = offsetof(Msg2, message);
+}
+
+
+
 bool SerializePlainCollectionHeader(ICdrWriter* writer, const meshi::dds::xtypes::PlainCollectionHeader& header)
 {
 	if (!writer->BeginAggregated())
@@ -1644,6 +1667,26 @@ public:
 		return { firstAlignment, maxAlignment };
 	}
 
+	std::tuple<uint32_t, uint32_t> GetAlignment(const CompleteUnionType& typeObject)
+	{
+		if (typeObject.member_seq.size() == 0)
+		{
+			// NOTE: Empty structure is unsupported in Current Version
+			return { 0, 0 };
+		}
+
+		auto& firstField = typeObject.discriminator.common.type_id;
+		auto [alignment, maxAlignment] = GetAlignment(firstField);
+		auto firstAlignment = alignment;
+		for (auto& it : typeObject.member_seq)
+		{
+			auto [fieldAlignment, fieldMaxAlignment] = GetAlignment(it.common.type_id);
+			maxAlignment = std::max(maxAlignment, fieldMaxAlignment);
+		}
+
+		return { firstAlignment, maxAlignment };
+	}
+
 	std::tuple<uint32_t, uint32_t> GetAlignment(const CompleteTypeObject& typeObject)
 	{
 		static_assert(std::alignment_of_v<std::vector<std::string>> == sizeof(void*), "Unsupported C++ Runtime");
@@ -1653,7 +1696,7 @@ public:
 		case meshi::dds::xtypes::TK_ALIAS:
 			return GetAlignment(typeObject.alias_type().body.common.related_type);
 		case TK_UNION:
-			return GetAlignment(typeObject.union_type().discriminator.common.type_id);
+			return GetAlignment(typeObject.union_type());
 		case TK_STRUCTURE:
 			return GetAlignment(typeObject.struct_type());
 		}
@@ -1874,7 +1917,7 @@ public:
 		case TK_STRING8:
 		case TI_STRING8_SMALL:
 		case TI_STRING8_LARGE:
-			offset = Align(offset, sizeof(std::string));
+			offset = Align(offset, std::alignment_of_v<std::string>);
 			if (!writer.String8(*(const std::string*)(obj + offset)))
 				return false;
 
@@ -1883,7 +1926,7 @@ public:
 		case TK_STRING16:
 		case TI_STRING16_SMALL:
 		case TI_STRING16_LARGE:
-			offset = Align(offset, sizeof(std::string));
+			offset = Align(offset, std::alignment_of_v<std::u16string>);
 			if (!writer.String16(*(const std::u16string*)(obj + offset)))
 				return false;
 
@@ -1947,7 +1990,156 @@ public:
 		return true;
 	}
 
-	bool Serialize(ICdrWriter& writer, const CppTypeObject& typeObject, const void* obj, uint32_t offset, uint32_t length)
+	bool SerializeDiscriminator(ICdrWriter& writer, const TypeIdentifier& typeId, const uint8_t* obj, uint32_t& offset, uint32_t length, Long& discriminator)
+	{
+		switch (typeId.d())
+		{
+		case TK_BYTE:
+		case TK_CHAR8:
+		case TK_BOOLEAN:
+			if (!writer.Octet(*(const uint8_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const uint8_t*)(obj + offset);
+			offset += 1;
+			return true;
+		case TK_INT16:
+			offset = Align(offset, 2);
+			if (!writer.UnsignedShort(*(const uint16_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const int16_t*)(obj + offset);
+			offset += 2;
+			return true;
+		case TK_UINT16:
+		case TK_CHAR16:
+			offset = Align(offset, 2);
+			if (!writer.UnsignedShort(*(const uint16_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const uint16_t*)(obj + offset);
+			offset += 2;
+			return true;
+			
+		case TK_INT32:
+			offset = Align(offset, 4);
+			if (!writer.UnsignedLong(*(const uint32_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const int32_t*)(obj + offset);
+			offset += 4;
+			return true;
+		case TK_UINT32:
+			offset = Align(offset, 4);
+			if (!writer.UnsignedLong(*(const uint32_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const uint32_t*)(obj + offset);
+			offset += 4;
+			return true;
+		case TK_FLOAT32:
+			offset = Align(offset, 4);
+			if (!writer.UnsignedLong(*(const uint32_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const float*)(obj + offset);
+			offset += 4;
+			return true;
+		case TK_INT64:
+			offset = Align(offset, 8);
+			if (!writer.UnsignedLongLong(*(const uint64_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const int64_t*)(obj + offset);
+			offset += 8;
+			return true;
+		case TK_UINT64:
+			offset = Align(offset, 8);
+			if (!writer.UnsignedLongLong(*(const uint64_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const uint64_t*)(obj + offset);
+			offset += 8;
+			return true;
+		case TK_FLOAT64:
+			offset = Align(offset, 8);
+			if (!writer.UnsignedLongLong(*(const uint64_t*)(obj + offset)))
+				return false;
+
+			discriminator = *(const double*)(obj + offset);
+			offset += 8;
+			return true;
+		case TK_STRING8:
+		case TI_STRING8_SMALL:
+		case TI_STRING8_LARGE:
+		case TK_STRING16:
+		case TI_STRING16_SMALL:
+		case TI_STRING16_LARGE:
+		case TI_PLAIN_SEQUENCE_SMALL:
+		case TI_PLAIN_SEQUENCE_LARGE:
+		case TI_PLAIN_ARRAY_SMALL:
+		case TI_PLAIN_ARRAY_LARGE:
+			return false;
+		case EK_COMPLETE:
+			if (auto it = m_typeObjectTable.find(typeId.equivalence_hash())
+				; it != m_typeObjectTable.end())
+			{
+				if (it->second.typeSizeOf == 0)
+				{
+					return false;
+				}
+
+				// TODO: Check TypeAlias and identify integer primitive type, otherwise, it cannot be discriminator.
+				// return Serialize(writer, it->second, obj, offset, length);
+			}
+
+			return false;
+		case EK_MINIMAL:
+			// NOTE: Minimal is not support in current version.
+			return false;
+		default:
+			return false;
+		}
+
+		return false;
+	}
+
+	bool Serialize(ICdrWriter& writer, const CompleteUnionType& typeObject, uint32_t maxAlignment, const uint8_t* obj, uint32_t& offset, uint32_t length)
+	{
+		int32_t discriminator = 0;
+		writer.BeginAggregated();
+		// TODO: Correct LengthCode
+		writer.BeginDiscriminator(0);
+		SerializeDiscriminator(writer, typeObject.discriminator.common.type_id, obj, offset, length, discriminator);
+		writer.EndDiscriminator();
+
+		for (const auto& member : typeObject.member_seq)
+		{
+			bool hit = false;
+			for (auto label : member.common.label_seq)
+			{
+				if (discriminator != label)
+					continue;
+
+				hit = true;
+				break;
+			}
+
+			if (!hit)
+				continue;
+
+			writer.BeginMember(member.common.member_id, false, 0);
+			Serialize(writer, member.common.type_id, obj, offset, length);
+			writer.EndMember();
+		}
+
+		writer.EndAggregated();
+
+		offset = Align(offset, maxAlignment);
+		return true;
+	}
+
+	bool Serialize(ICdrWriter& writer, const CppTypeObject& typeObject, const void* obj, uint32_t& offset, uint32_t length)
 	{
 		switch (typeObject.typeObject.d())
 		{
@@ -1994,19 +2186,6 @@ private:
 	std::shared_ptr<TypeLibrary> m_typeLibrary;
 };
 
-namespace Hello {
-	struct Msg
-	{
-		Long userId;
-		std::string message;
-	};
-	
-	struct Msg2
-	{
-		Msg obj;
-		std::string message;
-	};
-}
 
 int main()
 {
@@ -2039,6 +2218,15 @@ int main()
 					CompleteMemberDetail{
 						"message",
 						nullptr,
+						nullptr}},
+				CompleteStructMember{
+					CommonStructMember{
+						2,
+						StructMemberFlag{},
+						TypeIdentifier{TK_BYTE}},
+					CompleteMemberDetail{
+						"tmp",
+						nullptr,
 						nullptr}}
 			}
 		}
@@ -2047,12 +2235,10 @@ int main()
 	TypeObject HelloMsgTypeObject{ HelloMsgCompleteTypeObject };
 	// auto typeHashId = CalculateTypeEquivalenceHash(HelloMsgTypeObject);
 
-
 	EquivalenceHash helloMsgHashId;
 	EquivalenceHash helloMsg2HashId;
 	auto typeLibrary = std::make_shared<TypeLibrary>();
 	typeLibrary->RegisterType(HelloMsgCompleteTypeObject, &helloMsgHashId);
-
 
 	CompleteTypeObject HelloMsg2CompleteTypeObject{
 		CompleteStructType{
@@ -2088,10 +2274,12 @@ int main()
 
 	typeLibrary->RegisterType(HelloMsg2CompleteTypeObject, &helloMsg2HashId);
 
-	Hello::Msg msg{};
-	msg.userId = 555;
-	msg.message = "Hello, World!";
+	Hello::Msg2 msg{};
+	msg.obj.userId = 555;
+	msg.obj.message = "Hello, World!";
+	msg.obj.tmp = 1;
+	msg.message = "This is Msg2";
 
-	auto ret = typeLibrary->Serialize(helloMsgHashId, &msg, sizeof(msg));
+	auto ret = typeLibrary->Serialize(helloMsg2HashId, &msg, sizeof(msg));
 	return 0;
 }
