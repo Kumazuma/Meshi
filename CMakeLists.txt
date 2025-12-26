@@ -3,6 +3,11 @@
 #
 cmake_minimum_required (VERSION 3.10)
 
+if(WIN32)
+	add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+	add_compile_definitions(NOMINMAX)
+endif()
+
 # 지원되는 경우 MSVC 컴파일러에 대해 핫 다시 로드 사용하도록 설정합니다.
 if (POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)

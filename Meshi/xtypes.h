@@ -311,21 +311,34 @@ namespace meshi
 				External<TypeIdentifier> element_identifier;
 			};
 
-			struct PlainArraySElemDefn
+			template<typename TBoundSeq>
+			struct PlainArrayTElemDefn
 			{
 				PlainCollectionHeader header;
-				SBoundSeq arrayBoundSeq;
+				TBoundSeq arrayBoundSeq;
 				// External
 				External<TypeIdentifier> element_identifier;
+				
 			};
 
-			struct PlainArrayLElemDefn
-			{
-				PlainCollectionHeader header;
-				LBoundSeq arrayBoundSeq;
-				// External
-				External<TypeIdentifier> element_identifier;
-			};
+
+			using PlainArraySElemDefn = PlainArrayTElemDefn<SBoundSeq>;
+			//struct PlainArraySElemDefn
+			//{
+			//	PlainCollectionHeader header;
+			//	SBoundSeq arrayBoundSeq;
+			//	// External
+			//	External<TypeIdentifier> element_identifier;
+			//};
+
+			using PlainArrayLElemDefn = PlainArrayTElemDefn<LBoundSeq>;
+			//struct PlainArrayLElemDefn
+			//{
+			//	PlainCollectionHeader header;
+			//	LBoundSeq arrayBoundSeq;
+			//	// External
+			//	External<TypeIdentifier> element_identifier;
+			//};
 
 			struct PlainMapSTypeDefn
 			{
@@ -460,6 +473,19 @@ namespace meshi
 						}
 					}
 
+					Union(Octet d, const EquivalenceHash& hash)
+					{
+						switch (d)
+						{
+							case EK_COMPLETE:
+							case EK_MINIMAL:
+								new (&equivalence_hash) EquivalenceHash(hash);
+								break;
+							default:
+								throw std::runtime_error("");
+						}
+					}
+
 					~Union() {}
 
 					StringSTypeDefn string_sdefn;
@@ -483,6 +509,11 @@ namespace meshi
 				TypeIdentifier(const TypeIdentifier& rhs)
 					: _d{ rhs._d }
 					, value(rhs._d, rhs.value) {
+				}
+
+				TypeIdentifier(Octet d, const EquivalenceHash& hash)
+									: _d{ d }
+					, value(d, hash) {
 				}
 
 				Octet d() const {
