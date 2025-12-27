@@ -516,6 +516,61 @@ namespace meshi
 					, value(d, hash) {
 				}
 
+				TypeIdentifier& operator = (const TypeIdentifier& rhs) {
+					if (this == &rhs) {
+						return *this;
+					}
+
+					if (_d == rhs._d) {
+						// Same type, copy assign
+						switch (_d) {
+						case TI_STRING8_SMALL:
+							string_sdefn() = rhs.string_sdefn();
+							break;
+						case TI_STRING16_SMALL:
+							string_sdefn() = rhs.string_sdefn();
+							break;
+						case TI_STRING8_LARGE:
+							string_ldefn() = rhs.string_ldefn();
+							break;
+						case TI_STRING16_LARGE:
+							string_ldefn() = rhs.string_ldefn();
+							break;
+						case TI_PLAIN_SEQUENCE_SMALL:
+							seq_sdefn() = rhs.seq_sdefn();
+							break;
+						case TI_PLAIN_SEQUENCE_LARGE:
+							seq_ldefn() = rhs.seq_ldefn();
+							break;
+						case TI_PLAIN_ARRAY_SMALL:
+							array_sdefn() = rhs.array_sdefn();
+							break;
+						case TI_PLAIN_ARRAY_LARGE:
+							array_ldefn() = rhs.array_ldefn();
+							break;
+						case TI_PLAIN_MAP_SMALL:
+							map_sdefn() = rhs.map_sdefn();
+							break;
+						case TI_PLAIN_MAP_LARGE:
+							map_ldefn() = rhs.map_ldefn();
+							break;
+						case EK_COMPLETE:
+						case EK_MINIMAL:
+							equivalence_hash() = rhs.equivalence_hash();
+							break;
+						case TI_STRONGLY_CONNECTED_COMPONENT:
+							sc_component_id() = rhs.sc_component_id();
+							break;
+						}
+						return *this;
+					}
+
+					// Different type, destruct and reconstruct
+					this->~TypeIdentifier();
+					new(this) TypeIdentifier(rhs);
+					return *this;
+				}
+
 				Octet d() const {
 					return _d;
 				}
@@ -653,6 +708,13 @@ namespace meshi
 						throw std::runtime_error("");
 					}
 					return value.sc_component_id;
+				}
+
+				EquivalenceHash& equivalence_hash() {
+					if (_d != EK_COMPLETE && _d != EK_MINIMAL) {
+						throw std::runtime_error("");
+					}
+					return value.equivalence_hash;
 				}
 
 				const EquivalenceHash& equivalence_hash() const {
@@ -1101,19 +1163,19 @@ namespace meshi
 
 			using CompleteStructMemberSeq = std::vector<CompleteStructMember>;
 
-			struct MinimalStructmMember
+			struct MinimalStructMember
 			{
 				CommonStructMember common;
 				MinimalMemberDetail detail;
 			};
 
 			template<>
-			struct XTypesTrait<MinimalStructmMember> {
+			struct XTypesTrait<MinimalStructMember> {
 				static constexpr Extensibility extensibility = Extensibility::Appendable;
 			};
 
 			// Ordered by common.member_id
-			using MinimalStructMemberSeq = std::vector<MinimalStructmMember>;
+			using MinimalStructMemberSeq = std::vector<MinimalStructMember>;
 
 			struct AppliedBuiltinTypeAnnotations {
 				Optional<AppliedVerbatimAnnotation> verbatim;  // @verbatim(...)
@@ -2169,30 +2231,411 @@ namespace meshi
 
 			struct MinimalTypeObject
 			{
-				uint8_t _d;
+				union Union {
+					Union(Octet d) {
+						switch (d) {
+						case TK_ALIAS:
+						case TK_ANNOTATION:
+						case TK_STRUCTURE:
+						case TK_UNION:
+						case TK_BITSET:
+						case TK_SEQUENCE:
+						case TK_ARRAY:
+						case TK_MAP:
+							throw std::runtime_error("");
+							break;
+						case TK_ENUM:
+							new (&enumerated_type) MinimalEnumeratedType();
+							break;
+						case TK_BITMASK:
+							new (&bitmask_type) MinimalBitmaskType();
+							break;
+						default:
+							new (&extended_type) MinimalExtendedType();
+							break;
+						}
+					}
 
-				// TK_ALIAS
-				MinimalAliasType alias_type;
-				// TK_ANNOTATION
-				MinimalAnnotationType annotation_type;
-				// TK_STRUCTURE
-				MinimalStructType struct_type;
-				// TK_UNION
-				MinimalUnionType union_type;
-				// TK_BITSET
-				MinimalBitsetType bitset_type;
-				// TK_SEQEUNCE
-				MinimalSequenceType sequence_type;
-				// TK_ARRAY
-				MinimalArrayType array_type;
-				// TK_MAP
-				MinimalMapType map_type;
-				// TK_ENUM
-				MinimalEnumeratedType enumerated_type;
-				// TK_BITMASK
-				MinimalBitmaskType bitmask_type;
-				// Else
-				MinimalExtendedType extended_type;
+					Union(const MinimalAliasType& rhs)
+						: alias_type{ rhs } {
+					}
+
+					Union(const MinimalStructType& rhs)
+						: struct_type{ rhs } {
+					}
+					
+					Union(const MinimalUnionType& rhs)
+						: union_type{ rhs } {
+					}
+					
+					Union(const MinimalSequenceType& rhs)
+						: sequence_type{ rhs } {
+					}
+					
+					Union(const MinimalArrayType& rhs)
+						: array_type{ rhs } {
+					}
+					
+					Union(const MinimalMapType& rhs)
+						: map_type{ rhs } {
+					}
+
+					Union(Octet d, const Union& rhs) {
+						switch (d) {
+						case TK_ALIAS:
+							new (&alias_type) MinimalAliasType(rhs.alias_type);
+							break;
+						case TK_ANNOTATION:
+							new (&annotation_type) MinimalAnnotationType(rhs.annotation_type);
+							break;
+						case TK_STRUCTURE:
+							new (&struct_type) MinimalStructType(rhs.struct_type);
+							break;
+						case TK_UNION:
+							new (&union_type) MinimalUnionType(rhs.union_type);
+							break;
+						case TK_BITSET:
+							new (&bitset_type) MinimalBitsetType(rhs.bitset_type);
+							break;
+						case TK_SEQUENCE:
+							new (&sequence_type) MinimalSequenceType(rhs.sequence_type);
+							break;
+						case TK_ARRAY:
+							new (&array_type) MinimalArrayType(rhs.array_type);
+							break;
+						case TK_MAP:
+							new (&map_type) MinimalMapType(rhs.map_type);
+							break;
+						case TK_ENUM:
+							new (&enumerated_type) MinimalEnumeratedType(rhs.enumerated_type);
+							break;
+						case TK_BITMASK:
+							new (&bitmask_type) MinimalBitmaskType(rhs.bitmask_type);
+							break;
+						default:
+							new (&extended_type) MinimalExtendedType(rhs.extended_type);
+							break;
+						}
+					}
+
+					~Union() {};
+
+					// TK_ALIAS
+					MinimalAliasType alias_type;
+					// TK_ANNOTATION
+					MinimalAnnotationType annotation_type;
+					// TK_STRUCTURE
+					MinimalStructType struct_type;
+					// TK_UNION
+					MinimalUnionType union_type;
+					// TK_BITSET
+					MinimalBitsetType bitset_type;
+					// TK_SEQEUNCE
+					MinimalSequenceType sequence_type;
+					// TK_ARRAY
+					MinimalArrayType array_type;
+					// TK_MAP
+					MinimalMapType map_type;
+					// TK_ENUM
+					MinimalEnumeratedType enumerated_type;
+					// TK_BITMASK
+					MinimalBitmaskType bitmask_type;
+					// Else
+					MinimalExtendedType extended_type;
+				};
+
+			public:
+				MinimalTypeObject(uint8_t d)
+				: _d{ d }
+				, value(d) {
+				}
+
+				~MinimalTypeObject()
+				{
+					switch (_d)
+					{
+					case TK_ALIAS:
+						value.alias_type.~MinimalAliasType();
+						break;
+					case TK_ANNOTATION:
+						value.annotation_type.~MinimalAnnotationType();
+						break;
+					case TK_STRUCTURE:
+						value.struct_type.~MinimalStructType();
+						break;
+					case TK_UNION:
+						value.union_type.~MinimalUnionType();
+						break;
+					case TK_BITSET:
+						value.bitset_type.~MinimalBitsetType();
+						break;
+					case TK_SEQUENCE:
+						value.sequence_type.~MinimalSequenceType();
+						break;
+					case TK_ARRAY:
+						value.array_type.~MinimalArrayType();
+						break;
+					case TK_MAP:
+						value.map_type.~MinimalMapType();
+						break;
+					case TK_ENUM:
+						value.enumerated_type.~MinimalEnumeratedType();
+						break;
+					case TK_BITMASK:
+						value.bitmask_type.~MinimalBitmaskType();
+						break;
+					default:
+						value.extended_type.~MinimalExtendedType();
+						break;
+					}
+				}
+
+				MinimalTypeObject(const MinimalTypeObject& rhs)
+					: _d{ rhs._d }
+					, value(rhs._d, rhs.value) {
+				}
+
+				MinimalTypeObject(const MinimalAliasType& rhs)
+					: _d{ TK_ALIAS }
+					, value(rhs) {
+				}
+
+				MinimalTypeObject(const MinimalStructType& rhs)
+					: _d{ TK_STRUCTURE }
+					, value(rhs) {
+				}
+
+				MinimalTypeObject(const MinimalUnionType& rhs)
+					: _d{ TK_UNION }
+					, value(rhs) {
+				}
+
+				MinimalTypeObject(const MinimalSequenceType& rhs)
+					: _d{ TK_SEQUENCE }
+					, value(rhs) {
+				}
+
+				MinimalTypeObject(const MinimalArrayType& rhs)
+					: _d{ TK_ARRAY }
+					, value(rhs) {
+				}
+
+				MinimalTypeObject(const MinimalMapType& rhs)
+					: _d{ TK_MAP }
+					, value(rhs) {
+				}
+
+				TypeKind d() const {
+					return static_cast<TypeKind>(_d);
+				}
+
+				void d(TypeKind discriminator) {
+					if (_d == discriminator) {
+						return;
+					}
+				
+					this->~MinimalTypeObject();
+					new(this) MinimalTypeObject(static_cast<uint8_t>(discriminator));
+				}
+
+				void d(const MinimalAliasType& rhs) {
+					if (_d == TK_ALIAS) {
+						return;
+					}
+
+					this->~MinimalTypeObject();
+					new(this) MinimalTypeObject(rhs);
+				}
+
+				void d(const MinimalStructType& rhs) {
+					if (_d == TK_STRUCTURE)
+					{
+						return;
+					}
+
+					this->~MinimalTypeObject();
+					new(this) MinimalTypeObject(rhs);
+				}
+
+				void d(const MinimalSequenceType& rhs)
+				{
+					if (_d == TK_SEQUENCE)
+					{
+						return;
+					}
+
+					this->~MinimalTypeObject();
+					new(this) MinimalTypeObject(rhs);
+				}
+
+				void d(const MinimalArrayType& rhs)
+				{
+					if (_d == TK_ARRAY)
+					{
+						return;
+					}
+
+					this->~MinimalTypeObject();
+					new(this) MinimalTypeObject(rhs);
+				}
+
+				void d(const MinimalMapType& rhs)
+				{
+					if (_d == TK_MAP)
+					{
+						return;
+					}
+
+					this->~MinimalTypeObject();
+					new(this) MinimalTypeObject(rhs);
+				}
+
+				MinimalAliasType& alias_type() {
+					if (_d != TK_ALIAS) {
+						throw std::runtime_error("");
+					}
+					return value.alias_type;
+				}
+
+				const MinimalAliasType& alias_type() const {
+					if (_d != TK_ALIAS) {
+						throw std::runtime_error("");
+					}
+					return value.alias_type;
+				}
+
+				MinimalStructType& struct_type() {
+					if (_d != TK_STRUCTURE) {
+						throw std::runtime_error("");
+					}
+					return value.struct_type;
+				}
+
+				const MinimalStructType& struct_type() const {
+					if (_d != TK_STRUCTURE) {
+						throw std::runtime_error("");
+					}
+					return value.struct_type;
+				}
+
+				MinimalUnionType& union_type() {
+					if (_d != TK_UNION) {
+						throw std::runtime_error("");
+					}
+					return value.union_type;
+				}
+
+				const MinimalUnionType& union_type() const {
+					if (_d != TK_UNION) {
+						throw std::runtime_error("");
+					}
+					return value.union_type;
+				}
+
+				MinimalAnnotationType& annotation_type() {
+					if (_d != TK_ANNOTATION) {
+						throw std::runtime_error("");
+					}
+					return value.annotation_type;
+				}
+
+				const MinimalAnnotationType& annotation_type() const
+				{
+					if (_d != TK_ANNOTATION) {
+						throw std::runtime_error("");
+					}
+					return value.annotation_type;
+				}
+
+				MinimalBitsetType& bitset_type() {
+					if (_d != TK_BITSET) {
+						throw std::runtime_error("");
+					}
+					return value.bitset_type;
+				}
+
+				const MinimalBitsetType& bitset_type() const {
+					if (_d != TK_BITSET) {
+						throw std::runtime_error("");
+					}
+					return value.bitset_type;
+				}
+
+				MinimalSequenceType& sequence_type() {
+					if (_d != TK_SEQUENCE) {
+						throw std::runtime_error("");
+					}
+					return value.sequence_type;
+				}
+
+				const MinimalSequenceType& sequence_type() const {
+					if (_d != TK_SEQUENCE) {
+						throw std::runtime_error("");
+					}
+					return value.sequence_type;
+				}
+
+				MinimalArrayType& array_type() {
+					if (_d != TK_ARRAY) {
+						throw std::runtime_error("");
+					}
+					return value.array_type;
+				}
+
+				const MinimalArrayType& array_type() const {
+					if (_d != TK_ARRAY) {
+						throw std::runtime_error("");
+					}
+					return value.array_type;
+				}
+
+				MinimalMapType& map_type() {
+					if (_d != TK_MAP) {
+						throw std::runtime_error("");
+					}
+					return value.map_type;
+				}
+
+				const MinimalMapType& map_type() const
+				{
+					if (_d != TK_MAP) {
+						throw std::runtime_error("");
+					}
+					return value.map_type;
+				}
+
+				MinimalEnumeratedType& enumerated_type() {
+					if (_d != TK_ENUM) {
+						throw std::runtime_error("");
+					}
+					return value.enumerated_type;
+				}
+
+				const MinimalEnumeratedType& enumerated_type() const {
+					if (_d != TK_ENUM) {
+						throw std::runtime_error("");
+					}
+					return value.enumerated_type;
+				}
+
+				MinimalBitmaskType& bitmask_type() {
+					if (_d != TK_BITMASK) {
+						throw std::runtime_error("");
+					}
+					return value.bitmask_type;
+				}
+
+				const MinimalBitmaskType& bitmask_type() const {
+					if (_d != TK_BITMASK) {
+						throw std::runtime_error("");
+					}
+					return value.bitmask_type;
+				}
+
+			private:
+				uint8_t _d;
+				Union value;
+
 			};
 
 			class TypeObject

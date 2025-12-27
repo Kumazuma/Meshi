@@ -1344,28 +1344,6 @@ bool SerializCompleteMemberDetail(ICdrWriter* writer, const CompleteMemberDetail
 	return true;
 }
 
-template<>
-struct SequenceElementSerializerTrait<CompleteStructMember>{
-	bool operator()(ICdrWriter* writer, const CompleteStructMember& element) { 
-		if (!writer->BeginAggregated(ExtensibilityOf<CompleteStructMember>))
-		{
-			return false;
-		}
-
-		if (!SerializeCommonStructMember(writer, element.common))
-		{
-			return false;
-		}
-
-		if (!SerializCompleteMemberDetail(writer, element.detail))
-		{
-			return false;
-		}
-
-		return writer->EndAggregated();
-	}
-};
-
 bool SerializeCompleteStructType(ICdrWriter* writer, const CompleteStructType& structure)
 {
 	//StructTypeFlag type_flags;
@@ -1398,38 +1376,190 @@ bool SerializeCompleteStructType(ICdrWriter* writer, const CompleteStructType& s
 bool SerializeCompleteTypeObject(ICdrWriter* writer, const CompleteTypeObject& typeObject)
 {
 	writer->BeginAggregated(ExtensibilityOf<CompleteTypeObject>);
-	writer->BeginDiscriminator(1);
+	writer->BeginDiscriminator(0);
 	writer->Octet(typeObject.d());
 	writer->EndDiscriminator();
 
 	switch (typeObject.d())
 	{
-		case meshi::dds::xtypes::TK_ALIAS:
-			// Serialize alias_type
-			break;
-		case meshi::dds::xtypes::TK_ANNOTATION:
-			// Serialize annotation_type
-			break;
-		case meshi::dds::xtypes::TK_STRUCTURE:
-			// Serialize struct_type
-			writer->BeginMember(2, false, 4);
-			if (!SerializeCompleteStructType(writer, typeObject.struct_type()))
-			{
-				return false;
-			}
+	case meshi::dds::xtypes::TK_ALIAS:
+		// Serialize alias_type
+		break;
+	case meshi::dds::xtypes::TK_ANNOTATION:
+		// Serialize annotation_type
+		break;
+	case meshi::dds::xtypes::TK_STRUCTURE:
+		// Serialize struct_type
+		writer->BeginMember(3, false, 4);
+		if (!SerializeCompleteStructType(writer, typeObject.struct_type()))
+		{
+			return false;
+		}
 
-			writer->EndMember();
+		writer->EndMember();
 
 
-				return true;
-			
-			break;
+		return true;
+
+		break;
 	}
 
 	writer->EndAggregated();
 
 	return true;
 }
+
+bool SerializeMinimalTypeDetail(ICdrWriter* writer, const MinimalTypeDetail& detail)
+{
+	writer->BeginAggregated(ExtensibilityOf<MinimalTypeDetail>);
+
+	writer->EndAggregated();
+	return true;
+
+}
+
+bool SerializeMinimalStructHeader(ICdrWriter* writer, const MinimalStructHeader& header)
+{
+	writer->BeginAggregated(ExtensibilityOf<MinimalStructHeader>);
+
+	// Serialize base_type
+	writer->BeginMember(0, false, 4);
+	SerializeTypeIdentifier(writer, header.base_type);
+	writer->EndMember();
+
+	// Serialize detail
+	writer->BeginMember(1, false, 4);
+	SerializeMinimalTypeDetail(writer, header.detail);
+	writer->EndMember();
+
+	writer->EndAggregated();
+	return true;
+}
+
+bool SerializeMinimalStructType(ICdrWriter* writer, const MinimalStructType& structure)
+{
+	//StructTypeFlag type_flags;
+	//CompleteStructHeader header;
+	//CompleteStructMemberSeq member_seq;
+	writer->BeginAggregated(ExtensibilityOf<MinimalStructType>);
+	// Serialize type_flags
+	writer->BeginMember(0, false, 2);
+	writer->UnsignedShort(structure.struct_flags.value);
+	writer->EndMember();
+
+	// Serialize header
+	writer->BeginMember(1, false, 5);
+	if (!SerializeMinimalStructHeader(writer, structure.header))
+	{
+		return false;
+	}
+
+	writer->EndMember();
+
+	// Serialize member_seq
+	writer->BeginMember(2, false, 5);
+	SerializeSequence(writer, structure.member_seq);
+	writer->EndMember();
+
+	writer->EndAggregated();
+	return true;
+}
+
+bool SerializeMinimalTypeObject(ICdrWriter* writer, const MinimalTypeObject& typeObject)
+{
+	writer->BeginAggregated(ExtensibilityOf<MinimalTypeObject>);
+	writer->BeginDiscriminator(0);
+	writer->Octet(typeObject.d());
+	writer->EndDiscriminator();
+
+	switch (typeObject.d())
+	{
+	case meshi::dds::xtypes::TK_ALIAS:
+		// Serialize alias_type
+		break;
+	case meshi::dds::xtypes::TK_ANNOTATION:
+		// Serialize annotation_type
+		break;
+	case meshi::dds::xtypes::TK_STRUCTURE:
+		// Serialize struct_type
+		writer->BeginMember(3, false, 4);
+		if (!SerializeMinimalStructType(writer, typeObject.struct_type()))
+		{
+			return false;
+		}
+
+		writer->EndMember();
+
+
+		return true;
+
+		break;
+	}
+
+	writer->EndAggregated();
+
+	return true;
+}
+
+bool SerializMinimalMemberDetail(ICdrWriter* writer, const MinimalMemberDetail& member)
+{
+	writer->BeginAggregated(ExtensibilityOf<MinimalMemberDetail>);
+	writer->BeginArray(false);
+
+	for (auto it : member.name_hash)
+	{
+		writer->Octet(it);
+	}
+
+	writer->EndArray();
+
+	writer->EndAggregated();
+	return true;
+}
+
+template<>
+struct SequenceElementSerializerTrait<CompleteStructMember>{
+	bool operator()(ICdrWriter* writer, const CompleteStructMember& element) { 
+		if (!writer->BeginAggregated(ExtensibilityOf<CompleteStructMember>))
+		{
+			return false;
+		}
+
+		if (!SerializeCommonStructMember(writer, element.common))
+		{
+			return false;
+		}
+
+		if (!SerializCompleteMemberDetail(writer, element.detail))
+		{
+			return false;
+		}
+
+		return writer->EndAggregated();
+	}
+};
+
+template<>
+struct SequenceElementSerializerTrait<MinimalStructMember> {
+	bool operator()(ICdrWriter* writer, const MinimalStructMember& element) {
+		if (!writer->BeginAggregated(ExtensibilityOf<MinimalStructMember>))
+		{
+			return false;
+		}
+
+		if (!SerializeCommonStructMember(writer, element.common))
+		{
+			return false;
+		}
+
+		if (!SerializMinimalMemberDetail(writer, element.detail))
+		{
+			return false;
+		}
+
+		return writer->EndAggregated();
+	}
+};
 
 bool GenerateMd5(std::span<uint8_t> data, std::array<uint8_t, 16>& md5Ret)
 {
@@ -1504,7 +1634,19 @@ TypeObjectHashId CalculateTypeEquivalenceHash(const TypeObject& typeObject)
 	}
 	else if (typeObject.d() == EK_MINIMAL)
 	{
-		// TODO: not implmeneted yet!
+		objHashId._d = EK_MINIMAL;
+		Cdr2Writer<CDR1WRITER_ROLE_CALC_SIZE, std::endian::little> writerForCalcSerializeSize;
+		writerForCalcSerializeSize.WriteCdrHeader();
+		SerializeMinimalTypeObject(&writerForCalcSerializeSize, typeObject.minimal_type());
+		std::vector<uint8_t> serializedTypeObject;
+		serializedTypeObject.resize(writerForCalcSerializeSize.m_offset);
+
+		Cdr2Writer<CDR1WRITER_ROLE_SERIALIZATION, std::endian::little> writer{ serializedTypeObject.data(), serializedTypeObject.size() };
+		writer.WriteCdrHeader();
+		SerializeMinimalTypeObject(&writer, typeObject.minimal_type());
+		std::array<uint8_t, 16> md5{};
+		GenerateMd5(std::span<uint8_t>{serializedTypeObject}, md5);
+		memcpy(objHashId.hash.data(), md5.data(), objHashId.hash.size());
 	}
 
 	return objHashId;
@@ -1523,26 +1665,71 @@ struct std::less<EquivalenceHash>
 class TypeLibrary
 {
 public:
-	struct CppTypeObject
+	template<typename TTypeObject>
+	struct CppTTypeObject
 	{
 		uint32_t alignment;
-		uint32_t maxAlignment;
 		uint32_t typeSizeOf;
 		// TODO: 추후에 Max Serialized Size를 계산하여 직렬화 속도를 향상시킬 수 있다.
 		// uint32_t maxSerializedSize;
-		CompleteTypeObject typeObject;
+		TTypeObject typeObject;
 		EquivalenceHash hashId;
 	};
 
-	const CppTypeObject* GetTypeObject(const TypeObjectHashId& typeHashId)
+	using CppTypeObject = CppTTypeObject<CompleteTypeObject>;
+	using CppMinimalTypeObject = CppTTypeObject<MinimalTypeObject>;
+
+	const CppTypeObject* GetCompleteTypeObject(const EquivalenceHash& typeHashId)
 	{
-		auto it = m_typeObjectTable.find(typeHashId.hash);
+		auto it = m_typeObjectTable.find(typeHashId);
 		if (it != m_typeObjectTable.end())
 		{
 			return &it->second;
 		}
-		
+
 		return nullptr;
+	}
+
+	const MinimalTypeObject* GetMinimalTypeObject(const EquivalenceHash& typeHashId)
+	{
+		auto it = m_minimalTypeObjectTable.find(typeHashId);
+		if (it != m_minimalTypeObjectTable.end())
+		{
+			return &it->second.typeObject;
+		}
+
+		return nullptr;
+	}
+
+	bool RegisterType(const MinimalTypeObject& typeObject, EquivalenceHash* const ret)
+	{
+		TypeObject to{ typeObject };
+		auto typeHashId = CalculateTypeEquivalenceHash(to);
+		if (typeHashId._d != EK_MINIMAL)
+		{
+			return false;
+		}
+		if (m_minimalTypeObjectTable.count(typeHashId.hash) != 0)
+		{
+			return false;
+		}
+
+		// TODO: 
+		// Alignment와 TypeSizeOf를 계산한다.
+		auto alignment = GetTypeAlignment(typeObject);
+		uint32_t typeSizeOf = GetTypeDeserializedSize(typeObject);
+		if (alignment == 0 || typeSizeOf == 0)
+		{
+			return false;
+		}
+		CppMinimalTypeObject cppTypeObject{ alignment , typeSizeOf, typeObject, typeHashId.hash };
+		m_minimalTypeObjectTable.emplace(typeHashId.hash, cppTypeObject);
+		m_minimalTopLevelTypeObjectTable.emplace(typeHashId.hash, cppTypeObject);
+		if (ret != nullptr)
+		{
+			*ret = typeHashId.hash;
+		}
+		return true;
 	}
 
 	bool RegisterType(const CompleteTypeObject& typeObject, EquivalenceHash* const ret)
@@ -1561,13 +1748,13 @@ public:
 
 		// Alignment와 TypeSizeOf를 계산한다.
 		auto alignment = GetAlignment(typeObject);
-		uint32_t typeSizeOf = GetDeserializedSize(typeObject);
-		if (std::get<0>(alignment) == 0 || typeSizeOf == 0)
+		uint32_t typeSizeOf = GetTypeDeserializedSize(typeObject);
+		if (alignment == 0 || typeSizeOf == 0)
 		{
 			return false;
 		}
 
-		CppTypeObject cppTypeObject{ std::get<0>(alignment), std::get<1>(alignment) , typeSizeOf, typeObject, typeHashId.hash };
+		CppTypeObject cppTypeObject{ alignment , typeSizeOf, typeObject, typeHashId.hash };
 		m_typeObjectTable.emplace(typeHashId.hash, cppTypeObject);
 		m_topLevelTypeObjectTable.emplace(typeHashId.hash, cppTypeObject);
 		if (ret != nullptr)
@@ -1578,37 +1765,37 @@ public:
 		return true;
 	}
 
-	std::tuple<uint32_t, uint32_t> GetAlignment(const TypeIdentifier& typeIdentifier)
+	uint32_t GetAlignment(const TypeIdentifier& typeIdentifier)
 	{
 		switch (typeIdentifier.d())
 		{
 		case TK_BYTE:
 		case TK_CHAR8:
 		case TK_BOOLEAN:
-			return { 1, 1 };
+			return 1;
 		case TK_INT16:
 		case TK_UINT16:
 		case TK_CHAR16:
-			return { 2, 2 };
+			return 2;
 		case TK_INT32:
 		case TK_UINT32:
 		case TK_FLOAT32:
-			return { 4, 4 };
+			return 4;
 		case TK_INT64:
 		case TK_UINT64:
 		case TK_FLOAT64:
-			return { 8, 8 };
+			return 8;
 		case TK_STRING8:
 		case TI_STRING8_SMALL:
 		case TI_STRING8_LARGE:
-			return { std::alignment_of_v<std::string>, std::alignment_of_v<std::string> };
+			return std::alignment_of_v<std::string>;
 		case TK_STRING16:
 		case TI_STRING16_SMALL:
 		case TI_STRING16_LARGE:
-			return { std::alignment_of_v<std::u16string>, std::alignment_of_v<std::u16string> };
+			return std::alignment_of_v<std::u16string>;
 		case TI_PLAIN_SEQUENCE_SMALL:
 		case TI_PLAIN_SEQUENCE_LARGE:
-			return { std::alignment_of_v<std::vector<uintptr_t>>, std::alignment_of_v<std::vector<uintptr_t>> };
+			return std::alignment_of_v<std::vector<uintptr_t>>;
 		case TI_PLAIN_ARRAY_SMALL:
 			return GetAlignment(*typeIdentifier.array_sdefn().element_identifier);
 		case TI_PLAIN_ARRAY_LARGE:
@@ -1616,7 +1803,108 @@ public:
 
 		case TI_STRONGLY_CONNECTED_COMPONENT:
 			// NOTE: TI_STRONGLY_CONNECTED_COMPONENT is not support in current version.
-			return { 0, 0 };
+			return 0;
+
+		case EK_COMPLETE:
+			if (auto it = m_typeObjectTable.find(typeIdentifier.equivalence_hash())
+				; it != m_typeObjectTable.end())
+			{ 
+				return it->second.alignment;
+			}
+
+			return 0;
+
+		case EK_MINIMAL:
+			// NOTE: Minimal is not support in current version.
+			return 0;
+
+		default:
+			return 0;
+		}
+	}
+
+	uint32_t GetAlignment(const CompleteStructType& typeObject)
+	{
+		if (typeObject.header.base_type.d() != TK_NONE)
+		{
+			// NOTE: Inheritance is unsupported in Current Version
+			return 0;
+		}
+
+		if (typeObject.member_seq.size() == 0)
+		{
+			// NOTE: Empty structure is unsupported in Current Version
+			return 0;
+		}
+
+		uint32_t maxAlignment = 0;
+		for (auto& it : typeObject.member_seq)
+		{
+			auto alignment = GetAlignment(it.common.member_type_id);
+			maxAlignment = std::max(maxAlignment, alignment);
+		}
+
+		return maxAlignment;
+	}
+
+	uint32_t GetAlignment(const CompleteUnionType& typeObject)
+	{
+		if (typeObject.member_seq.size() == 0)
+		{
+			// NOTE: Empty structure is unsupported in Current Version
+			return 0;
+		}
+
+		auto& firstField = typeObject.discriminator.common.type_id;
+		auto maxAlignment = GetAlignment(firstField);
+		for (auto& it : typeObject.member_seq)
+		{
+			auto fieldAlignment = GetAlignment(it.common.type_id);
+			maxAlignment = std::max(maxAlignment, fieldAlignment);
+		}
+
+		return maxAlignment;
+	}
+
+	uint32_t GetAlignmentByTypeId(const TypeIdentifier& typeIdentifier)
+	{
+		switch (typeIdentifier.d())
+		{
+		case TK_BYTE:
+		case TK_CHAR8:
+		case TK_BOOLEAN:
+			return 1;
+		case TK_INT16:
+		case TK_UINT16:
+		case TK_CHAR16:
+			return 2;
+		case TK_INT32:
+		case TK_UINT32:
+		case TK_FLOAT32:
+			return 4;
+		case TK_INT64:
+		case TK_UINT64:
+		case TK_FLOAT64:
+			return 8;
+		case TK_STRING8:
+		case TI_STRING8_SMALL:
+		case TI_STRING8_LARGE:
+			return std::alignment_of_v<std::string>;
+		case TK_STRING16:
+		case TI_STRING16_SMALL:
+		case TI_STRING16_LARGE:
+			return std::alignment_of_v<std::u16string>;
+		case TI_PLAIN_SEQUENCE_SMALL:
+		case TI_PLAIN_SEQUENCE_LARGE:
+			return std::alignment_of_v<std::vector<uintptr_t>>;
+		case TI_PLAIN_ARRAY_SMALL:
+			return GetAlignmentByTypeId(*typeIdentifier.array_sdefn().element_identifier);
+		case TI_PLAIN_ARRAY_LARGE:
+			return GetAlignmentByTypeId(*typeIdentifier.array_ldefn().element_identifier);
+
+		case TI_STRONGLY_CONNECTED_COMPONENT:
+			// NOTE: TI_STRONGLY_CONNECTED_COMPONENT is not support in current version.
+			return 0;
 
 		case EK_COMPLETE:
 			if (auto it = m_typeObjectTable.find(typeIdentifier.equivalence_hash())
@@ -1624,76 +1912,100 @@ public:
 			{
 				if (it->second.alignment == 0)
 				{
-					return { 0, 0 };
+					return 0;
 				}
 
-				return { it->second.alignment, it->second.maxAlignment };
+				return it->second.alignment;
 			}
-
-			return {0, 0};
+			
+			return { 0 };
 
 		case EK_MINIMAL:
-			// NOTE: Minimal is not support in current version.
-			return { 0, 0 };
+			if (auto it = m_minimalTypeObjectTable.find(typeIdentifier.equivalence_hash())
+				; it != m_minimalTypeObjectTable.end())
+			{
+				if (it->second.alignment == 0)
+				{
+					return 0;
+				}
+
+				return it->second.alignment;
+			}
+
+			return 0;
 
 		default:
-			return { 0, 0 };
+			return 0;
 		}
 	}
 
-	std::tuple<uint32_t, uint32_t> GetAlignment(const CompleteStructType& typeObject)
+	template<typename TUnionType>
+	uint32_t GetUnionAlignment(const TUnionType& unionType)
 	{
-		if (typeObject.header.base_type.d() != TK_NONE)
+		if (unionType.member_seq.size() == 0)
+		{
+			// NOTE: Empty structure is unsupported in Current Version
+			return 0;
+		}
+
+		uint32_t maxAlignment = GetAlignment(unionType.discriminator.common.type_id);
+		for (auto& it : unionType.member_seq)
+		{
+			uint32_t alignment = GetAlignmentByTypeId(it.common.type_id);
+			maxAlignment = std::max(maxAlignment, alignment);
+		}
+
+		return maxAlignment;
+	}
+
+	template<typename TStructType>
+	uint32_t GetStructAlignment(const TStructType& structType)
+	{
+		if (structType.header.base_type.d() != TK_NONE)
 		{
 			// NOTE: Inheritance is unsupported in Current Version
-			return { 0, 0 };
+			return 0;
 		}
 
-		if (typeObject.member_seq.size() == 0)
+		if (structType.member_seq.size() == 0)
 		{
 			// NOTE: Empty structure is unsupported in Current Version
-			return { 0, 0 };
+			return 0;
 		}
 
-		auto& firstField = typeObject.member_seq.front();
-		auto [alignment, maxAlignment] = GetAlignment(firstField.common.member_type_id);
-		auto firstAlignment = alignment;
-		for (auto& it : typeObject.member_seq)
+		uint32_t maxAlignment = 0;
+		for (auto& it : structType.member_seq)
 		{
-			auto [fieldAlignment, fieldMaxAlignment] = GetAlignment(it.common.member_type_id);
-			maxAlignment = std::max(maxAlignment, fieldMaxAlignment);
+			uint32_t alignment = GetAlignmentByTypeId(it.common.member_type_id);
+			maxAlignment = std::max(maxAlignment, alignment);
 		}
 
-		return { firstAlignment, maxAlignment };
+		return maxAlignment;
 	}
 
-	std::tuple<uint32_t, uint32_t> GetAlignment(const CompleteUnionType& typeObject)
+	template<typename TTypeObject>
+	uint32_t GetTypeAlignment(const TTypeObject typeObject)
 	{
-		if (typeObject.member_seq.size() == 0)
+		switch (typeObject.d())
 		{
-			// NOTE: Empty structure is unsupported in Current Version
-			return { 0, 0 };
+		case TK_ALIAS:
+			return GetAlignmentByTypeId(typeObject.alias_type().body.common.related_type);
+		case TK_UNION:
+			return GetUnionAlignment(typeObject.union_type());
+		case TK_STRUCTURE:
+			return GetStructAlignment(typeObject.struct_type());
 		}
 
-		auto& firstField = typeObject.discriminator.common.type_id;
-		auto [alignment, maxAlignment] = GetAlignment(firstField);
-		auto firstAlignment = alignment;
-		for (auto& it : typeObject.member_seq)
-		{
-			auto [fieldAlignment, fieldMaxAlignment] = GetAlignment(it.common.type_id);
-			maxAlignment = std::max(maxAlignment, fieldMaxAlignment);
-		}
-
-		return { firstAlignment, maxAlignment };
+		return 0;
 	}
 
-	std::tuple<uint32_t, uint32_t> GetAlignment(const CompleteTypeObject& typeObject)
+	uint32_t GetAlignment(const CompleteTypeObject& typeObject)
 	{
 		static_assert(std::alignment_of_v<std::vector<std::string>> == sizeof(void*), "Unsupported C++ Runtime");
 		static_assert(sizeof(std::vector<std::string>) == sizeof(std::vector<char>), "Unsupported C++ Runtime");
 		switch (typeObject.d())
 		{
-		case meshi::dds::xtypes::TK_ALIAS:
+		case TK_ALIAS:
 			return GetAlignment(typeObject.alias_type().body.common.related_type);
 		case TK_UNION:
 			return GetAlignment(typeObject.union_type());
@@ -1701,13 +2013,13 @@ public:
 			return GetAlignment(typeObject.struct_type());
 		}
 
-		return { 0, 0 };
+		return 0;
 	}
 
 	template<typename TArrayElemDefn>
-	uint32_t GetDeserializedSize(const PlainArrayTElemDefn<TArrayElemDefn>& def)
+	uint32_t GetArrayDeserializedSize(const PlainArrayTElemDefn<TArrayElemDefn>& def)
 	{
-		uint32_t arraySize = GetDeserializedSize(*def.element_identifier);
+		uint32_t arraySize = GetDeserializedSizeByTypeId(*def.element_identifier);
 		for (const auto& b : def.arrayBoundSeq)
 		{
 			arraySize *= b;
@@ -1716,7 +2028,7 @@ public:
 		return arraySize;
 	}
 
-	uint32_t GetDeserializedSize(const TypeIdentifier& typeIdentifier)
+	uint32_t GetDeserializedSizeByTypeId(const TypeIdentifier& typeIdentifier)
 	{
 		switch (typeIdentifier.d())
 		{
@@ -1759,16 +2071,16 @@ public:
 
 			return sizeof(std::vector<uintptr_t>);
 		case TI_PLAIN_ARRAY_SMALL:
-			return GetDeserializedSize(typeIdentifier.array_sdefn());
+			return GetArrayDeserializedSize(typeIdentifier.array_sdefn());
 		case TI_PLAIN_ARRAY_LARGE:
-			return GetDeserializedSize(typeIdentifier.array_ldefn());
+			return GetArrayDeserializedSize(typeIdentifier.array_ldefn());
 		case EK_COMPLETE:
 			if (auto it = m_typeObjectTable.find(typeIdentifier.equivalence_hash())
 				; it != m_typeObjectTable.end())
 			{
 				if (it->second.typeSizeOf == 0)
 				{
-					it->second.typeSizeOf = GetDeserializedSize(it->second.typeObject);
+					it->second.typeSizeOf = GetTypeDeserializedSize(it->second.typeObject);
 				}
 
 				return it->second.typeSizeOf;
@@ -1784,7 +2096,8 @@ public:
 		}
 	}
 
-	uint32_t GetDeserializedSize(const CompleteStructType& typeObject)
+	template<typename TStructType>
+	uint32_t GetStructDeserializedSize(const TStructType& typeObject)
 	{
 		if (typeObject.header.base_type.d() != TK_NONE)
 		{
@@ -1796,29 +2109,30 @@ public:
 		uint32_t structAlignment = 1;
 		for (const auto& member : typeObject.member_seq)
 		{
-			auto [alignment, _ ] = GetAlignment(member.common.member_type_id);
+			auto alignment = GetAlignmentByTypeId(member.common.member_type_id);
 			structAlignment = std::max(alignment, structAlignment);
 			totalSize = (totalSize + (alignment - 1)) & ~(alignment - 1);
-			totalSize += GetDeserializedSize(member.common.member_type_id);
+			totalSize += GetDeserializedSizeByTypeId(member.common.member_type_id);
 		}
 
 		totalSize = (totalSize + (structAlignment - 1)) & ~(structAlignment - 1);
 		return totalSize;
 	}
 
-	uint32_t GetDeserializedSize(const CompleteUnionType& typeObject)
+	template<typename TUnionType>
+	uint32_t GetUnionDeserializedSize(const TUnionType& typeObject)
 	{
 		uint32_t totalSize = 0;
 		uint32_t structAlignment = 1;
 		uint32_t alignment;
 		uint32_t memberSize = 0;
-		uint32_t discriminator = GetDeserializedSize(typeObject.discriminator.common.type_id);
+		uint32_t discriminator = GetDeserializedSizeByTypeId(typeObject.discriminator.common.type_id);
 
 		for (const auto& member : typeObject.member_seq)
 		{
-			auto [alignment, _ ] = GetAlignment(member.common.type_id);
+			auto alignment = GetAlignmentByTypeId(member.common.type_id);
 			structAlignment = std::max(alignment, structAlignment);
-			memberSize = std::max(memberSize, GetDeserializedSize(member.common.type_id));
+			memberSize = std::max(memberSize, GetDeserializedSizeByTypeId(member.common.type_id));
 		}
 
 		totalSize = discriminator;
@@ -1828,44 +2142,143 @@ public:
 		return totalSize;
 	}
 
-	uint32_t GetDeserializedSize(const CompleteTypeObject& typeObject)
+	template<typename TTypeObject>
+	uint32_t GetTypeDeserializedSize(const TTypeObject& typeObject)
 	{
 		switch (typeObject.d())
 		{
 		case TK_ALIAS:
-			return GetDeserializedSize(typeObject.alias_type().body.common.related_type);
+			return GetDeserializedSizeByTypeId(typeObject.alias_type().body.common.related_type);
 		case TK_UNION:
-			return GetDeserializedSize(typeObject.union_type().discriminator.common.type_id);
+			return GetUnionDeserializedSize(typeObject.union_type());
 		case TK_STRUCTURE:
-			return GetDeserializedSize(typeObject.struct_type());
+			return GetStructDeserializedSize(typeObject.struct_type());
 		}
 
 		return 0;
 	}
 
-	std::vector<uint8_t> Serialize(const EquivalenceHash& typeIden, const void* obj, uint32_t length)
+	std::vector<uint8_t> Serialize(const TypeObjectHashId& typeIden, const void* obj, uint32_t length)
 	{
-		auto it = m_topLevelTypeObjectTable.find(typeIden);
-		if (it == m_topLevelTypeObjectTable.end())
+		if (typeIden._d == EK_COMPLETE)
 		{
-			return {};
+			auto it = m_topLevelTypeObjectTable.find(typeIden.hash);
+			if (it == m_topLevelTypeObjectTable.end())
+			{
+				return {};
+			}
+
+			return SerializeObject(it->second, obj, length);
+		}
+		else if(typeIden._d == EK_MINIMAL)
+		{
+			auto it = m_minimalTopLevelTypeObjectTable.find(typeIden.hash);
+			if (it == m_minimalTopLevelTypeObjectTable.end())
+			{
+				return {};
+			}
+
+			return SerializeObject(it->second, obj, length);
 		}
 
-		return Serialize(it->second, obj, length);
+		return {};
 	}
 
-	std::vector<uint8_t> Serialize(const CppTypeObject& typeObject, const void* obj, uint32_t length)
+	template<typename TStructType>
+	bool SerializeStruct(ICdrWriter& writer, const TStructType& typeObject, uint32_t alignment, const uint8_t* obj, uint32_t& offset, uint32_t length)
+	{
+		writer.BeginAggregated();
+		if (typeObject.header.base_type.d() != TK_NONE)
+		{
+			// NOTE: Inheritance is unsupported in Current Version
+			return false;
+		}
+
+		for (const auto& member : typeObject.member_seq)
+		{
+			writer.BeginMember(member.common.member_id, false, 0);
+			SerializeByTypeId(writer, member.common.member_type_id, obj, offset, length);
+			writer.EndMember();
+		}
+
+		writer.EndAggregated();
+
+		offset = Align(offset, alignment);
+		return true;
+	}
+
+
+	template<typename TUnionType>
+	bool SerializeUnion(ICdrWriter& writer, const TUnionType& typeObject, uint32_t maxAlignment, const uint8_t* obj, uint32_t& offset, uint32_t length)
+	{
+		int32_t discriminator = 0;
+		writer.BeginAggregated();
+		// TODO: Correct LengthCode
+		writer.BeginDiscriminator(0);
+		SerializeDiscriminator(writer, typeObject.discriminator.common.type_id, obj, offset, length, discriminator);
+		writer.EndDiscriminator();
+
+		bool hit = false;
+		for (const auto& member : typeObject.member_seq)
+		{
+			for (auto label : member.common.label_seq)
+			{
+				if (discriminator != label)
+					continue;
+
+				hit = true;
+				break;
+			}
+
+			if (!hit)
+				continue;
+
+			writer.BeginMember(member.common.member_id, false, 0);
+			SerializeByTypeId(writer, member.common.type_id, obj, offset, length);
+			writer.EndMember();
+			break;
+		}
+
+		writer.EndAggregated();
+
+		if (!hit)
+			return false;
+
+		offset = Align(offset, maxAlignment);
+		return true;
+	}
+
+	template<typename TTypeObject>
+	bool SerializeAny(ICdrWriter& writer, const CppTTypeObject<TTypeObject>& typeObject, const void* obj, uint32_t& offset, uint32_t length)
+	{
+		switch (typeObject.typeObject.d())
+		{
+		case TK_ALIAS:
+			// TODO: Not supported yet
+			return false;
+			// return GetDeserializedSize(typeObject.alias_type().body.common.related_type);
+		case TK_UNION:
+			return SerializeUnion(writer, typeObject.typeObject.union_type(), typeObject.alignment, (const uint8_t*)obj, offset, length);
+		case TK_STRUCTURE:
+			return SerializeStruct(writer, typeObject.typeObject.struct_type(), typeObject.alignment, (const uint8_t*)obj, offset, length);
+		}
+
+		return false;
+	}
+
+	template<typename TTypeObject>
+	std::vector<uint8_t> SerializeObject(const CppTTypeObject<TTypeObject>& typeObject, const void* obj, uint32_t length)
 	{
 		std::vector<uint8_t> ret;
 		Cdr1Writer<CDR1WRITER_ROLE_CALC_SIZE> writerForCalcSize{  };
 		uint32_t offset = 0;
 		writerForCalcSize.WriteCdrHeader();
-		Serialize(writerForCalcSize, typeObject, (const uint8_t*)obj, offset, length);
+		SerializeAny(writerForCalcSize, typeObject, (const uint8_t*)obj, offset, length);
 		ret.resize(writerForCalcSize.m_offset);
 		Cdr1Writer<CDR1WRITER_ROLE_SERIALIZATION> writer{ ret.data(), ret.size() };
 		offset = 0;
 		writer.WriteCdrHeader();
-		Serialize(writer, typeObject, (const uint8_t*)obj, offset, length);
+		SerializeAny(writer, typeObject, (const uint8_t*)obj, offset, length);
 		ret.erase(ret.begin() + writer.m_offset, ret.end());
 		return ret;
 	}
@@ -1875,7 +2288,7 @@ public:
 		return (offset + (alignment - 1)) & ~(alignment - 1);
 	}
 
-	bool Serialize(ICdrWriter& writer, const TypeIdentifier& identifier, const uint8_t* obj, uint32_t& offset, uint32_t length)
+	bool SerializeByTypeId(ICdrWriter& writer, const TypeIdentifier& identifier, const uint8_t* obj, uint32_t& offset, uint32_t length)
 	{
 		switch (identifier.d())
 		{
@@ -1953,41 +2366,29 @@ public:
 					return false;
 				}
 
-				return Serialize(writer, it->second, obj, offset, length);
+				return SerializeAny(writer, it->second, obj, offset, length);
 			}
 
 			return false;
 
 		case EK_MINIMAL:
-			// NOTE: Minimal is not support in current version.
+			if (auto it = m_minimalTypeObjectTable.find(identifier.equivalence_hash())
+				; it != m_minimalTypeObjectTable.end())
+			{
+				if (it->second.typeSizeOf == 0)
+				{
+					return false;
+				}
+
+				return SerializeAny(writer, it->second, obj, offset, length);
+			}
+
 			return false;
 		default:
 			return false;
 		}
 
 		return false;
-	}
-
-	bool Serialize(ICdrWriter& writer, const CompleteStructType& typeObject, uint32_t maxAlignment, const uint8_t* obj, uint32_t& offset, uint32_t length)
-	{
-		writer.BeginAggregated();
-		if (typeObject.header.base_type.d() != TK_NONE)
-		{
-			// NOTE: Inheritance is unsupported in Current Version
-			return false;
-		}
-
-		for (const auto& member : typeObject.member_seq)
-		{
-			writer.BeginMember(member.common.member_id, false, 0);
-			Serialize(writer, member.common.member_type_id, obj, offset, length);
-			writer.EndMember();
-		}
-
-		writer.EndAggregated();
-
-		offset = Align(offset, maxAlignment);
-		return true;
 	}
 
 	bool SerializeDiscriminator(ICdrWriter& writer, const TypeIdentifier& typeId, const uint8_t* obj, uint32_t& offset, uint32_t length, Long& discriminator)
@@ -2095,6 +2496,7 @@ public:
 
 			return false;
 		case EK_MINIMAL:
+
 			// NOTE: Minimal is not support in current version.
 			return false;
 		default:
@@ -2104,64 +2506,66 @@ public:
 		return false;
 	}
 
-	bool Serialize(ICdrWriter& writer, const CompleteUnionType& typeObject, uint32_t maxAlignment, const uint8_t* obj, uint32_t& offset, uint32_t length)
-	{
-		int32_t discriminator = 0;
-		writer.BeginAggregated();
-		// TODO: Correct LengthCode
-		writer.BeginDiscriminator(0);
-		SerializeDiscriminator(writer, typeObject.discriminator.common.type_id, obj, offset, length, discriminator);
-		writer.EndDiscriminator();
-
-		for (const auto& member : typeObject.member_seq)
-		{
-			bool hit = false;
-			for (auto label : member.common.label_seq)
-			{
-				if (discriminator != label)
-					continue;
-
-				hit = true;
-				break;
-			}
-
-			if (!hit)
-				continue;
-
-			writer.BeginMember(member.common.member_id, false, 0);
-			Serialize(writer, member.common.type_id, obj, offset, length);
-			writer.EndMember();
-		}
-
-		writer.EndAggregated();
-
-		offset = Align(offset, maxAlignment);
-		return true;
-	}
-
-	bool Serialize(ICdrWriter& writer, const CppTypeObject& typeObject, const void* obj, uint32_t& offset, uint32_t length)
-	{
-		switch (typeObject.typeObject.d())
-		{
-		case TK_ALIAS:
-			// TODO: Not supported yet
-			return false;
-			// return GetDeserializedSize(typeObject.alias_type().body.common.related_type);
-		case TK_UNION:
-			// TODO: Not supported yet
-			return false;
-			// return GetDeserializedSize(typeObject.union_type().discriminator.common.type_id);
-		case TK_STRUCTURE:
-			return Serialize(writer, typeObject.typeObject.struct_type(), typeObject.maxAlignment, (const uint8_t*)obj, offset, length);
-		}
-
-		return false;
-	}
-
 private:
 	std::map<EquivalenceHash, CppTypeObject> m_topLevelTypeObjectTable;
 	std::map<EquivalenceHash, CppTypeObject> m_typeObjectTable;
+	std::map<EquivalenceHash, CppMinimalTypeObject> m_minimalTypeObjectTable;
+	std::map<EquivalenceHash, CppMinimalTypeObject> m_minimalTopLevelTypeObjectTable;
+
 };
+
+std::optional<MinimalTypeObject> CreateFromCompleteTypeObject(const CompleteTypeObject& completeTypeObject, TypeLibrary& library) {
+	TypeKind d = completeTypeObject.d();
+	if (d == TK_STRUCTURE)
+	{
+		const auto& structType = completeTypeObject.struct_type();
+		MinimalStructType minimalStructType{ structType.struct_flags, MinimalStructHeader{ structType.header.base_type } };
+		for (auto& it : structType.member_seq)
+		{
+			std::array<uint8_t, 16> nameHashMd5;
+			MinimalStructMember minimalMember{ it.common, {} };
+			if (minimalMember.common.member_type_id.d() == EK_COMPLETE)
+			{
+				// MinimalTypeObject는 CompleteTypeObject를 참조하지 않도록 강제한다.
+				if (auto nestedTypeObject = library.GetCompleteTypeObject(minimalMember.common.member_type_id.equivalence_hash());
+					nestedTypeObject != nullptr)
+				{
+					if (auto minimalNestedTypeObject = CreateFromCompleteTypeObject(nestedTypeObject->typeObject, library);
+						minimalNestedTypeObject.has_value())
+					{
+						TypeObjectHashId hash{};
+						hash = CalculateTypeEquivalenceHash(nestedTypeObject->typeObject);
+						auto obj = library.GetMinimalTypeObject(hash.hash);
+						if (obj == nullptr)
+						{
+							library.RegisterType(minimalNestedTypeObject.value(), &hash.hash);
+						}
+						
+						minimalMember.common.member_type_id.d(EK_MINIMAL);
+						minimalMember.common.member_type_id.equivalence_hash() = hash.hash;
+					}
+				}
+			}
+
+			GenerateMd5(std::span<uint8_t>{(uint8_t*)it.detail.type_name.data(), it.detail.type_name.length()}, nameHashMd5);
+			memcpy(minimalMember.detail.name_hash.data(), nameHashMd5.data(), minimalMember.detail.name_hash.size());
+
+			minimalStructType.member_seq.push_back(minimalMember);
+		}
+
+		return MinimalTypeObject{ minimalStructType };
+	}
+	else if (d == TK_UNION)
+	{
+
+	}
+	else if (d == TK_ALIAS)
+	{
+		
+	}
+
+	return std::nullopt;
+}
 
 class CdrReader
 {
@@ -2189,6 +2593,18 @@ private:
 
 int main()
 {
+	struct B
+	{
+		char c;
+		int64_t d;
+	};
+	struct A
+	{
+		int a;
+		B b;
+	};
+
+
 	using namespace meshi::dds::xtypes;
 
 	CompleteTypeObject HelloMsgCompleteTypeObject{
@@ -2274,12 +2690,15 @@ int main()
 
 	typeLibrary->RegisterType(HelloMsg2CompleteTypeObject, &helloMsg2HashId);
 
+	EquivalenceHash minimalHash{};
+	auto helloMsg2MinimalObject = CreateFromCompleteTypeObject(HelloMsg2CompleteTypeObject, *typeLibrary);
+	typeLibrary->RegisterType(helloMsg2MinimalObject.value(), &minimalHash);
 	Hello::Msg2 msg{};
 	msg.obj.userId = 555;
 	msg.obj.message = "Hello, World!";
 	msg.obj.tmp = 1;
 	msg.message = "This is Msg2";
 
-	auto ret = typeLibrary->Serialize(helloMsg2HashId, &msg, sizeof(msg));
+	auto ret = typeLibrary->Serialize(TypeObjectHashId{ EK_MINIMAL, minimalHash }, &msg, sizeof(msg));
 	return 0;
 }
